@@ -1,0 +1,26 @@
+spring:
+  application:
+    name: skill-hub
+  profiles:
+    # 只有 dev 与 prod 两个环境,没有 test / staging
+    default: dev
+  servlet:
+    multipart:
+      # skill 包是几十 KB 到几 MB 的 zip,给足余量但不放任
+      max-file-size: 32MB
+      max-request-size: 64MB
+
+server:
+  port: ${SERVER_PORT:18080}
+  servlet:
+    # 后端独立 context,前端 vite.config.ts 的 base 必须同步为 /skillhub/
+    context-path: /skillhub
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+logging:
+  level:
+    com.landray.skillhub: INFO

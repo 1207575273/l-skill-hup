@@ -174,25 +174,30 @@ requirements-analyst -> architect -> [backend-engineer | frontend-engineer] -> t
 
 **环境事实**(已实测,别再重新探测):
 
-- Docker Engine 28.1.1 装在 WSL 发行版 `Ubuntu-20.04` 内,**Windows 侧没有 docker CLI**。
-- 一个 `alpine/socat` 容器(`aip-docker-tcp`)把 unix socket 转发到 `127.0.0.1:2375`,`restart=always`。
-- WSL 开了 systemd,`dockerd` 已 `systemctl enable`。
-- 靠 WSL2 的 localhost 转发,**Windows 侧直接 `curl http://localhost:2375/version` 可通**。
+- Docker Engine 28.1.1 装在 WSL 发行版 `Ubuntu-20.04` 内。
+- WSL 开了 systemd,`dockerd` 已 `systemctl enable`,并原生监听 `127.0.0.1:12375`。
+- 靠 WSL2 的 localhost 转发(`networkingMode=mirrored` + `hostAddressLoopback=true`),**Windows 侧直接 `curl http://localhost:12375/version` 可通**。
 - `/etc/wsl.conf` 里 `appendWindowsPath=false`,所以 **WSL 内看不到 Windows 的 java/maven/node**。分工:WSL 只跑 Docker,开发工具链全在 Windows 侧。
 
-**已装好的东西**(不用重复安装):
+**已装好的东西**(不用重复安装,也不要再重新探测):
 
 - Windows 侧静态 docker CLI 28.1.1 在 `~/.local/bin/docker.exe`(已在 PATH),compose 插件 v5.3.1 在 `~/.docker/cli-plugins/`。**不是 Docker Desktop**,顺带避开其商业授权问题。
-- docker context `wsl` 已创建并设为当前,指向 `tcp://localhost:2375`。Git Bash 里 `docker` / `docker compose` 直接可用,client 与 server 均为 28.1.1。
+- **dockerd 原生监听 `tcp://127.0.0.1:12375`**(改了 `daemon.json` 的 hosts + systemd drop-in 清掉 `-H fd://`)。不经任何 socat 容器 —— 机器上那个 `aip-docker-tcp`(2375)属于**别的项目**,曾短暂借用过,已解耦,别再依赖它。
+- docker context `wsl` 已创建并设为当前,指向 12375。Git Bash 里 `docker` / `docker compose` 直接可用。
 - **Testcontainers 能自动识别 docker context**,所以连 `DOCKER_HOST` 都不用配。
+- 计划任务 `WSL-Watchdog`(每分钟)+ `~/.local/bin/wsl-watchdog.ps1`:探测不通就拉起 WSL。
+
+**WSL 会周期性自己关闭,这是 WSL 的已知缺陷不是配置问题**(microsoft/WSL#40363:Hyper-V VmSwitch 事件 285 与生命周期管理交互失败;微软无根本修复)。`vmIdleTimeout=-1` 和 WSL 内常驻 `sleep infinity` 都试过,**都挡不住**。所以方案是不阻止关闭、只快速恢复。
+
+**因此 `scripts/*.mjs` 必须自带探测唤醒**:先 `fetch http://localhost:12375/_ping`,不通就 `wsl.exe -d Ubuntu-20.04 -- /bin/true` 并轮询等待,**不要让使用者自己排查**——那个报错(`connectex: 目标计算机积极拒绝`)看起来像 docker 配置错了,极具误导性。
+
+完整教程与排障见 `docs/20260802193801_Windows下WSL2-Docker开发环境实践.md`。
 
 **两条纪律**:
 
 1. **不许用绑定挂载,一律命名卷。** 路径由 daemon 侧解释,而 daemon 在 WSL 里 —— compose 里写 `./data:/var/lib/...`,CLI 会展开成 `D:\...` 传过去,daemon 当 Linux 路径解析直接失败。同理 Testcontainers **禁用 `withFileSystemBind`**,需要往容器放文件用 classpath 复制(如 `withInitScript`)。
    (`docker build` 不受影响:build context 是 CLI 侧打包后发给 daemon 的,Windows 路径正常,而且比在 WSL 里读 `/mnt/d` 更快。)
 2. **PG 对外映射 15432,不用 5432。** WSL 里同时跑着其他项目的容器(含另一个 postgres),5432 是最容易撞的端口。容器内仍是 5432,只改宿主映射。
-
-**唯一的人工环节**:WSL 按需启动,没起时 2375 不通。`scripts/*.mjs` 必须先探测 2375,不通就 `wsl.exe -d Ubuntu-20.04 -- true` 唤醒,不要让使用者自己排查。
 
 生产走多阶段 Dockerfile:node 阶段构建前端 -> 产物拷进 maven 阶段 -> `mvn package` -> jre 阶段运行。宿主机不需要装 JDK / Node / Maven。
 

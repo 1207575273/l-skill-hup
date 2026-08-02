@@ -1,0 +1,14 @@
+/* Tailwind 4:一行 import 取代 v3 的 @tailwind base/components/utilities */
+@import 'tailwindcss';
+
+/* 设计 token 统一在这里定义。JSX 里不许出现 text-[#1a2b3c] 这类魔法值。
+   v4 用 CSS 的 @theme 块,不再有 tailwind.config.ts 的 theme.extend。 */
+@theme {
+  --color-brand-50: oklch(0.97 0.02 259);
+  --color-brand-100: oklch(0.93 0.05 259);
+  --color-brand-500: oklch(0.62 0.19 259);
+  --color-brand-600: oklch(0.55 0.19 259);
+  --color-brand-700: oklch(0.48 0.17 259);
+
+  --radius-card: 0.75rem;
+}
