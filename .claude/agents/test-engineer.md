@@ -83,7 +83,7 @@ color: orange
 
 - **用途**:覆盖跨页面的关键旅程(目录上传发布 -> 列表出现 -> 选择安装 -> 拿到脚本命令 的完整闭环)。单元/接口层能测的不上 E2E。
 - **放置**:`frontend/e2e/`,文件 `*.spec.ts`。
-- **起被测环境**:`docker compose -f docker/docker-compose.infra.yml -f docker/docker-compose.app.yml up -d --build`(同源单进程),baseURL 带 `/skillhub` 前缀。
+- **起被测环境**:`docker compose -f docker/docker-compose.yml --profile full up -d --build`(同源单进程),baseURL 带 `/skillhub` 前缀。
 - **最佳实践**:`getByRole`/`getByLabel` 定位;web-first 断言自动等待,**禁硬 sleep**;页面对象组织;失败留 trace。
 - **克制**:E2E 慢且脆,精而不滥。JUnit/Vitest 仍是主力与覆盖率闸门。
 

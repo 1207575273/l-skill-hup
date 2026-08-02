@@ -49,8 +49,7 @@ l-skill-hup/
 ├── scripts/*.mjs           统一入口,零依赖,node 直接跑
 ├── docker/
 │   ├── Dockerfile                  多阶段:node 构建前端 -> maven 构建后端 -> jre 运行
-│   ├── docker-compose.infra.yml    基座(PG),dev 与 prod 共用同一份定义
-│   └── docker-compose.app.yml      应用,只有 prod 用
+│   └── docker-compose.yml          单文件,用 profiles 区分 infra / full
 └── docs/                   持久化文档,归集规范见 docs/README.md
 ```
 
@@ -152,17 +151,31 @@ requirements-analyst -> architect -> [backend-engineer | frontend-engineer] -> t
 | 应用 | IDE 或 `mvn spring-boot:run` 直接跑,热重载 | 容器内跑打好的 jar |
 | 前端 | Vite dev server + proxy | 已打进 jar,同源托管 |
 
-**infra 与应用分开,但 dev 和 prod 各跑各的实例。**
+**dev 和 prod 各跑各的实例,一份 compose 定义两边共用**(同一个 PG 版本、同一套初始化),用 profiles 区分:
 
-`docker-compose.infra.yml` 一份定义两边共用(同一个 PG 版本、同一套初始化),保证环境一致;应用容器可随便重建而不碰数据。
+```yaml
+services:
+  postgres:
+    profiles: ["infra", "full"]
+  app:
+    profiles: ["full"]
+
+volumes:
+  pgdata:
+    external: true          # 见下,不许改成非 external
+    name: skillhub_pgdata
+```
 
 **严禁 dev 连 prod 的数据库,哪怕只是换个库名。** 理由是 Flyway:迁移在应用启动时自动执行 DDL,共用实例时配置写错一次就直接改了生产库结构,而 Flyway 铁律是"已执行的脚本不能改",污染 `flyway_schema_history` 后清理极其痛苦。这是迟早会发生一次的事故,不是靠小心能避免的。何况 Testcontainers 本来就要求本地有 Docker,多起一个 PG 容器的边际成本接近零。
 
+**PG 数据卷必须声明为 `external`。** Compose 规范明确"external 的卷永不被移除",这样 `docker compose down -v` 无论带什么 profile 都删不掉生产数据。代价是首次部署要手动 `docker volume create skillhub_pgdata` —— 这一步是一次性的,而正因为它一次性,后面所有 `down -v` 才安全。**不许为了省这一步把它改成普通卷。**
+
 ```
-起基座   docker compose -f docker/docker-compose.infra.yml up -d
+首次部署 docker volume create skillhub_pgdata
+起基座   docker compose -f docker/docker-compose.yml --profile infra up -d
 开发     node scripts/dev.mjs          并行起后端 + Vite,带端口探测
 自查     node scripts/check.mjs        后端 + 前端全量检查
-生产     docker compose -f docker/docker-compose.infra.yml -f docker/docker-compose.app.yml up -d --build
+生产     docker compose -f docker/docker-compose.yml --profile full up -d --build
 ```
 
 生产走多阶段 Dockerfile:node 阶段构建前端 -> 产物拷进 maven 阶段 -> `mvn package` -> jre 阶段运行。宿主机不需要装 JDK / Node / Maven。
