@@ -113,11 +113,15 @@ skill-hub 分发的是**会被 Agent 执行的内容**,安全上没有"内部工
 - **根因**:Spring Boot 4 基线换成 Jackson 3,包名迁移到 `tools.jackson.*`。网上绝大多数教程仍是 Jackson 2。
 - **处理**:一律用 `tools.jackson.*`。搜到的示例默认当作 Spring Boot 3 的,先核对 import 再用。
 
-### 8.2 Spring Boot 4 自动配置 JAR 已拆分
+### 8.2 Spring Boot 4 自动配置 JAR 已拆分(已被 Flyway 坑过一次)
 
 - **现象**:按 3.x 经验排查依赖或找自动配置类,位置对不上。
-- **根因**:Spring Boot 4 把自动配置拆成多个 JAR,starter 的依赖组织跟 3.x 不同。
-- **处理**:排依赖用 `mvn dependency:tree`,不要凭 3.x 记忆推断。
+- **根因**:Spring Boot 4 把自动配置从 `spring-boot-autoconfigure` 拆成了一堆独立模块(`spring-boot-flyway` / `spring-boot-jdbc` / `spring-boot-jackson` / `spring-boot-health` ...),starter 的依赖组织跟 3.x 完全不同。
+- **实际踩到的**:pom 里只写了 `flyway-core` + `flyway-database-postgresql`,**迁移根本不执行,而且不报任何错** —— 应用正常启动、健康检查 UP、库里一张表都没有。原因是自动配置在 `org.springframework.boot:spring-boot-flyway` 里,那个模块没引。
+- **处理**:
+  - 引第三方集成时,**除了功能库本身,还要确认对应的 `spring-boot-<xxx>` 自动配置模块在不在**。
+  - 排依赖用 `mvn dependency:tree`,不要凭 3.x 记忆推断。
+  - **这类"静默不生效"最阴**,所以任何基础设施接进来后都要有一个能证明它真的跑了的验证动作(Flyway 就是 `\dt` 看表在不在),不能只看应用启动成功。
 
 ### 8.3 MyBatis starter 的版本必须跟 Spring Boot 主线对齐
 
@@ -135,6 +139,32 @@ skill-hub 分发的是**会被 Agent 执行的内容**,安全上没有"内部工
 
 - 命令默认按 **Git Bash** 给;Git Bash 搞不定再降级 PowerShell,并明确标注。
 - 安装脚本 **PowerShell 是一等公民**,`.ps1` 与 `.sh` 两份都要写、都要测,不许只测一份。
+- **Git Bash 会把命令行里的 `/xxx` 当成路径改写成 Windows 路径**。`docker exec app ls /app/logs` 会变成 `ls "D:/Program Files/Git/app/logs"` 然后报 No such file。容器内路径、`docker cp` 的目标、`kubectl exec` 之类一律要防:前面加 `MSYS_NO_PATHCONV=1`,或写成 `//app/logs`,或把整条命令包进 `sh -c '...'`(引号内不转换)。
+
+### 8.6 本机没有 buildx,Dockerfile 不许用 BuildKit 专属语法
+
+- **现象**:`docker compose build` 报 `the --mount option requires BuildKit`,输出还是 `Step 5/35` 这种经典构建器格式。
+- **根因**:本机 docker CLI 是手工装的静态二进制,`~/.docker/cli-plugins/` 里**只有 compose、没有 buildx**。现代 Docker 默认走 BuildKit 是因为装了 buildx 插件;没有它就回落到 daemon 的经典构建器,`RUN --mount=type=cache|secret|bind`、heredoc 这些 BuildKit 专属语法全部不认。
+- **处理**:`docker/Dockerfile` **必须能被经典构建器构建**,不许用上述语法。多阶段 `COPY --from` 经典构建器支持,放心用。缓存靠正常的层顺序解决(依赖清单先拷、单独一层装依赖),够用。哪天装了 buildx 再回来放开。
+
+### 8.7 管道会吞掉命令的退出码
+
+- **现象**:`mvn verify | tail -80` / `docker build | tail -400` 明明失败了,`$?` 却是 0,于是误报"构建成功"。
+- **根因**:管道的退出码是**最后一个命令**的,`tail` 只要正常输出就返回 0。
+- **处理**:要判断成败就**不要接管道**。统一写成重定向到日志文件再单独取码:
+
+  ```bash
+  cmd > build.log 2>&1; echo "exit=$?"
+  ```
+
+  已经踩过两次,不要再犯。
+
+### 8.8 没有 .gitattributes 时,Spotless 会因为行尾直接把 `mvn verify` 挂掉
+
+- **现象**:`mvn verify` 在 validate 阶段挂,Spotless 报一大片 format violations,diff 里两边内容一模一样,只有 `\n` 与 `\r\n` 的差别。
+- **根因**:Windows 上 `core.autocrlf=true`,工作区文件是 CRLF;而 Spotless 的 `lineEndings` 默认策略是 `GIT_ATTRIBUTES`,仓库里没有 `.gitattributes` 时它判定成 LF,两边对不上。
+- **处理**:**用 `.gitattributes` 定死,不要去关 Spotless 检查**。仓库根已有该文件:源码一律 `eol=lf`,`.ps1` / `.bat` 保持 `eol=crlf`,`.sh` 显式 `eol=lf`。已有文件用 `mvn -f backend spotless:apply` 一次性归正,git 侧用 `git add --renormalize .`。
+- **顺带**:`.sh` 必须 LF 不只是洁癖 —— CRLF 会让 sh 报 `bad interpreter: /bin/bash^M`,而这个报错完全看不出是行尾问题。本项目要分发 `.sh` 安装脚本,这条是硬需求。
 
 ## 九、Agent 与协作
 
@@ -162,11 +192,14 @@ requirements-analyst -> architect -> [backend-engineer | frontend-engineer] -> t
 **严禁 dev 连 prod 的数据库,哪怕只是换个库名。** 理由是 Flyway:迁移在应用启动时自动执行 DDL,共用实例时配置写错一次就直接改了生产库结构,而 Flyway 铁律是"已执行的脚本不能改",污染 `flyway_schema_history` 后清理极其痛苦。这是迟早会发生一次的事故,不是靠小心能避免的。何况 Testcontainers 本来就要求本地有 Docker,多起一个 PG 容器的边际成本接近零。
 
 ```
+配置     cp docker/.env.example docker/.env      compose 自动读同目录 .env;prod 必须改 DB_PASSWORD
 起基座   docker compose -f docker/docker-compose.yml up -d postgres
 开发     node scripts/dev.mjs          并行起后端 + Vite,带端口探测
 自查     node scripts/check.mjs        后端 + 前端全量检查
 生产     docker compose -f docker/docker-compose.yml up -d --build
 ```
+
+镜像分三阶段:`node` 构建前端 -> 产物拷进 `backend/src/main/resources/static/` -> `maven` 打 jar -> `jre` 运行。构建 context 是仓库根目录(compose 里 `context: ..`),根目录 `.dockerignore` 负责把 `node_modules/` `target/` 这些挡在外面。容器内不用 root 跑,健康检查走 `/skillhub/actuator/health`(首页是静态文件,DB 挂了照样 200,探不出真问题)。
 
 数据卷用普通命名卷。`down` 不删数据,`down -v` 会删 —— 现阶段库里是 skill 制品与元数据,真删了让大家重新上传即可,不值得为此加部署复杂度。等哪天数据变得不可重建了(有了安装统计、审核记录、用户归属),再回头做备份或改 external。
 
