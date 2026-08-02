@@ -157,6 +157,50 @@
                 </executions>
             </plugin>
 
+            <!-- 把依赖的实际路径暴露成属性(如 ${org.mockito:mockito-core:jar}),
+                 下面 surefire 挂 Mockito agent 要用。绑在 initialize,保证跑在测试之前。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>resolve-agent-paths</id>
+                        <phase>initialize</phase>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!--
+                      JDK 21 起(JEP 451)对"运行时动态挂 Java agent"发告警,
+                      并明确将来会**默认禁止**。Mockito 5 的 inline mock-maker 正是靠
+                      byte-buddy-agent 自挂,实测会刷出:
+                        Mockito is currently self-attaching to enable the inline-mock-maker.
+                        WARNING: A Java agent has been loaded dynamically (byte-buddy-agent-*.jar)
+                        WARNING: Dynamic loading of agents will be disallowed by default in a future release
+
+                      这里**不用 -XX:+EnableDynamicAgentLoading** —— 那只是把告警藏起来,
+                      等哪天升 JDK 会直接构建失败。按 Mockito 官方做法显式挂 agent,
+                      mockito-core 的 MANIFEST 里有 Premain-Class,支持这么用。
+
+                      -Xshare:off 消除随之而来的 CDS 告警
+                      (Sharing is only supported for boot loader classes ...):
+                      agent 往 bootstrap classpath 追加了内容,类数据共享随即失效。
+
+                      @{argLine} 是必须的:JaCoCo 的 prepare-agent 把 -javaagent 写进
+                      argLine 属性,而在 surefire 里显式配 <argLine> 会把它整个顶掉,
+                      结果就是覆盖率永远 0。@{...} 让 Maven 在执行时把那份值原样嵌回来。
+                    -->
+                    <argLine>-javaagent:${org.mockito:mockito-core:jar} -Xshare:off @{argLine}</argLine>
+                </configuration>
+            </plugin>
+
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>

@@ -178,6 +178,25 @@ skill-hub 分发的是**会被 Agent 执行的内容**,安全上没有"内部工
 - **处理**:**用 `.gitattributes` 定死,不要去关 Spotless 检查**。仓库根已有该文件:源码一律 `eol=lf`,`.ps1` / `.bat` 保持 `eol=crlf`,`.sh` 显式 `eol=lf`。已有文件用 `mvn -f backend spotless:apply` 一次性归正,git 侧用 `git add --renormalize .`。
 - **顺带**:`.sh` 必须 LF 不只是洁癖 —— CRLF 会让 sh 报 `bad interpreter: /bin/bash^M`,而这个报错完全看不出是行尾问题。本项目要分发 `.sh` 安装脚本,这条是硬需求。
 
+### 8.9 `-Dmaven.legacyLocalRepo=true` 是哑参数,别再用它
+
+- **现象**:网上和一些项目用它关掉 `_remote.repositories` 校验、声称能提速。
+- **根因**:**Maven 3.9.11 的 `lib/` 里整个目录零命中这个字符串**(`for j in *.jar; do unzip -p "$j" | grep -c legacyLocalRepo; done` 全是 0)。加了它 `mvn -X` 里照样是 `Using manager EnhancedLocalRepositoryManager`。
+- **我们自己踩过的坑**:曾经测得"加上它构建从 38s 降到 21s"并写进了配置。那是**错误的因果归因** —— 前一次构建已经把 `_remote.repositories` 重写完了,第二次自然不用再验证。测量新参数时,**要在稳态下 A/B,不能拿"改动后的第一次"跟"第二次"比**。
+- **处理**:已从 `backend/.mvn/maven.config` 移除。真要绕开连不通的私库,用同 id 覆盖 profile,见 `backend/CLAUDE.md` 9.1。
+
+### 8.10 `maven.config` 里 `-s` 的相对路径按当前工作目录解析
+
+- **现象**:在仓库根跑 `mvn -f backend/pom.xml`,报 `The specified user settings file does not exist: <仓库根>\.mvn\settings.xml`。
+- **根因**:`.mvn/maven.config` 是从项目根目录找到的,但里面 `-s` 的相对路径按**当前工作目录**解析。两者在"从项目根跑"时重合,所以平时看不出来。
+- **处理**:**`mvn` 一律在 `backend/` 目录下跑**。所有入口都已保证:CLAUDE.md 写 `cd backend && mvn verify`,`scripts/*.mjs` 显式设 `cwd`。
+
+### 8.11 JDK 21 对动态挂 Java agent 发告警,将来会直接禁止
+
+- **现象**:一旦用上 Mockito,测试输出刷出 `Mockito is currently self-attaching...` / `WARNING: A Java agent has been loaded dynamically` / `WARNING: Dynamic loading of agents will be disallowed by default in a future release`,外加一条 CDS 告警。
+- **根因**:JEP 451。Mockito 5 的 inline mock-maker 靠 byte-buddy-agent 运行时自挂。
+- **处理**:**不要用 `-XX:+EnableDynamicAgentLoading`** —— 那只是把告警藏起来,升 JDK 那天会直接失败。按 Mockito 官方做法在 surefire 里显式 `-javaagent`,配置与三个组成部分的作用见 `backend/CLAUDE.md` 9.2。**特别注意 `@{argLine}`**:漏了它 JaCoCo 的 agent 会被顶掉,覆盖率永远 0 而构建照样绿。
+
 ## 九、Agent 与协作
 
 **简单需求直接在主会话干完,不启动流水线。** 仅当多模块、需求模糊或工作量大时才拆:
@@ -199,19 +218,45 @@ requirements-analyst -> architect -> [backend-engineer | frontend-engineer] -> t
 | 应用 | IDE 或 `mvn spring-boot:run` 直接跑,热重载 | 容器内跑打好的 jar |
 | 前端 | Vite dev server + proxy | 已打进 jar,同源托管 |
 
-**dev 和 prod 各跑各的实例,一份 `docker/docker-compose.yml` 两边共用**(同一个 PG 版本、同一套初始化)。就一个文件,不拆、不用 profiles、不用 external 卷 —— dev 起 `postgres` 一个 service,prod 起全部。
+**dev 和 prod 各跑各的实例,一份 `docker/docker-compose.yml` 两边共用**(同一个 PG 版本、同一套初始化)。**就一个文件,不拆、不用 external 卷。**
+
+应用分成 `app-dev` / `app-prod` 两个服务,各自挂 compose profile,**共用同一个镜像与同一个 postgres,只有 `SPRING_PROFILES_ACTIVE` 不同** —— 这正是要验证的东西:同一个制品在两种 profile 下都能起来。但**数据卷各自独立**,dev 的制品与日志绝不能混进 prod。`postgres` 不带 profile,任何一档都会把它带起来。
+
+用 compose profile 而不是拆文件:拆文件会让两边的 postgres 定义各写一份,迟早漂移;profile 只影响"起哪些服务",不影响"服务怎么定义"。
 
 **严禁 dev 连 prod 的数据库,哪怕只是换个库名。** 理由是 Flyway:迁移在应用启动时自动执行 DDL,共用实例时配置写错一次就直接改了生产库结构,而 Flyway 铁律是"已执行的脚本不能改",污染 `flyway_schema_history` 后清理极其痛苦。这是迟早会发生一次的事故,不是靠小心能避免的。何况 Testcontainers 本来就要求本地有 Docker,多起一个 PG 容器的边际成本接近零。
 
 ```
-配置     cp docker/.env.example docker/.env      compose 自动读同目录 .env;prod 必须改 DB_PASSWORD
-起基座   docker compose -f docker/docker-compose.yml up -d postgres
-开发     node scripts/dev.mjs          并行起后端 + Vite,带端口探测
-自查     node scripts/check.mjs        后端 + 前端全量检查
-生产     docker compose -f docker/docker-compose.yml up -d --build
+配置       cp docker/.env.example docker/.env    compose 自动读同目录 .env;prod 必须改 DB_PASSWORD
+起基座     docker compose -f docker/docker-compose.yml up -d postgres
+开发       node scripts/dev.mjs        并行起后端 + Vite,带 docker 探测唤醒与端口占用报告
+自查       node scripts/check.mjs      后端 + 前端全量检查
+dev 容器档 docker compose -f docker/docker-compose.yml --profile dev  up -d --build
+prod 档    docker compose -f docker/docker-compose.yml --profile prod up -d --build
+停         docker compose -f docker/docker-compose.yml --profile <档> down
 ```
 
+**停的时候必须带 `--profile`**:不带时 compose 看不见带 profile 的服务,`down` / `stop` 会静默地什么都没停,而命令本身返回 0。
+
+日常开发用 `node scripts/dev.mjs`(应用在本机跑,热重载);`--profile dev` 那一档是给"不想装本地 JDK"或"要验证 dev 配置完整链路"的场景用的,两者端口相同、互斥。
+
 镜像分三阶段:`node` 构建前端 -> 产物拷进 `backend/src/main/resources/static/` -> `maven` 打 jar -> `jre` 运行。构建 context 是仓库根目录(compose 里 `context: ..`),根目录 `.dockerignore` 负责把 `node_modules/` `target/` 这些挡在外面。容器内不用 root 跑,健康检查走 `/skillhub/actuator/health`(首页是静态文件,DB 挂了照样 200,探不出真问题)。
+
+### 10.0 配置文件的形态:重复是哲学,不许抽公共段
+
+**`application.yml` 只放一件事 —— 激活哪个 profile,值从环境变量读。**
+
+```yaml
+spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+```
+
+**其余配置一律在 `application-dev.yml` 与 `application-prod.yml` 里全量重复**,包括 `spring.application.name`、端口、context-path、multipart、mybatis、management、日志 —— 一条都不往公共段抽。
+
+理由:抽公共段看着 DRY,代价是每次想给某个环境做精细化调整,都要先判断"这条在不在公共段、改了会不会波及另一个环境"。而两个环境本来就该能独立演进 —— dev 要 DEBUG、要打 SQL、health 要显示明细、日志留 7 天;prod 要 INFO、绝不打 SQL、health 不泄漏依赖细节、日志留 30 天。**这里的重复是特性,不是缺陷。**
+
+配套规矩:**一个环境改了,另一个环境要么同步改、要么明确决定不改**,不许因为"公共段里已经有了"而漏掉其中一个。
 
 数据卷用普通命名卷。`down` 不删数据,`down -v` 会删 —— 现阶段库里是 skill 制品与元数据,真删了让大家重新上传即可,不值得为此加部署复杂度。等哪天数据变得不可重建了(有了安装统计、审核记录、用户归属),再回头做备份或改 external。
 

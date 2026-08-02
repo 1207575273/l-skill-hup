@@ -57,8 +57,13 @@ node scripts/dev.mjs
 | 只查后端 | `cd backend && mvn verify` |
 | 只查前端 | `cd frontend && pnpm check` |
 | 只起基座 | `docker compose -f docker/docker-compose.yml up -d postgres` |
-| 生产部署 | `docker compose -f docker/docker-compose.yml up -d --build` |
-| 停掉全部 | `docker compose -f docker/docker-compose.yml down`(加 `-v` 会删数据) |
+| dev 档(应用也进容器) | `docker compose -f docker/docker-compose.yml --profile dev up -d --build` |
+| prod 档 | `docker compose -f docker/docker-compose.yml --profile prod up -d --build` |
+| 停 | `docker compose -f docker/docker-compose.yml --profile <档> down`(加 `-v` 会删数据) |
+
+应用分 `app-dev` / `app-prod` 两档,共用同一个镜像和同一个 postgres,只有 `SPRING_PROFILES_ACTIVE` 不同,数据卷各自独立。两档端口相同、互斥,不该同时起。
+
+**停的时候必须带 `--profile`** —— 不带时 compose 看不见带 profile 的服务,`down` 会静默地什么都没停,而命令本身返回 0。
 
 `scripts/*.mjs` 零第三方依赖,`node` 直接跑。
 

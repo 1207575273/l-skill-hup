@@ -1,18 +1,89 @@
-# prod = 内网服务器。连接信息一律走环境变量,此处不留任何默认凭据。
+# prod = 内网服务器。与 application-dev.yml **全量重复**,刻意不抽公共段(理由见 application.yml)。
+#
+# 连接信息一律走环境变量,**此处不留任何默认凭据** —— 少一个占位默认值,
+# 就少一次"忘了配也能起来、起来了连的却是错的库"的事故。
+
 spring:
+  application:
+    name: skill-hub
+
+  servlet:
+    multipart:
+      # skill 包是几十 KB 到几 MB 的 zip,给足余量但不放任
+      max-file-size: 32MB
+      max-request-size: 64MB
+
   datasource:
     url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}
     username: ${DB_USER}
     password: ${DB_PASSWORD}
+
   flyway:
     enabled: true
+    # prod 库必须从 V0001 一路迁上来。开 baseline 会跳过已有脚本,
+    # 相当于默认"库结构已经对了",出问题时无从追溯。
     baseline-on-migrate: false
+
+server:
+  port: ${SERVER_PORT:18080}
+  servlet:
+    # 前端 vite.config.ts 的 base 必须同步为 /skillhub/
+    context-path: /skillhub
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # 只开 health,给容器 HEALTHCHECK 用。多开一个端点就是多一份攻击面。
+        include: health
+  endpoint:
+    health:
+      # 不对外泄漏依赖组件的细节(DB 地址、磁盘路径等)
+      show-details: never
 
 skillhub:
   storage:
     type: local
     local-root: ${ARTIFACT_ROOT}
 
+# 日志:控制台人类可读(交给 docker logs),文件 JSONL(ECS)落挂载卷。
 logging:
   level:
+    root: INFO
     com.landray.skillhub: INFO
+    # prod 绝不打 SQL:量大、拖慢、且参数里可能带敏感值
+
+  pattern:
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faded} %clr(%5p) %clr([%X{traceId:-------------}]){magenta} %clr([%12.12t]){faded} %clr(%-44.44logger{43}){cyan} %clr(:){faded} %m%n%wEx"
+
+  file:
+    name: ${LOG_ROOT:./logs}/skill-hub.jsonl
+
+  structured:
+    format:
+      file: ecs
+    ecs:
+      service:
+        name: ${spring.application.name}
+        version: ${APP_VERSION:0.1.0}
+        environment: prod
+    json:
+      stacktrace:
+        root: first
+        max-length: 8192
+        include-common-frames: false
+
+  logback:
+    rollingpolicy:
+      file-name-pattern: ${LOG_ROOT:./logs}/skill-hub.%d{yyyy-MM-dd}.%i.jsonl.gz
+      max-file-size: 100MB
+      # 保留 30 天且总量不超过 3GB,两个条件谁先触发谁生效 ——
+      # 只设天数挡不住某天被刷爆磁盘,只设总量又可能刚出问题就被滚掉。
+      max-history: 30
+      total-size-cap: 3GB
+      clean-history-on-start: true

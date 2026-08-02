@@ -254,11 +254,48 @@ Spotless 格式 + 编译 + JUnit + ArchUnit + JaCoCo(>= 80%)。确属基础设�
 
 | 文件 | 作用 |
 | --- | --- |
-| `maven.config` | 自动追加 `-s .mvn/settings.xml` 与 `-Dmaven.legacyLocalRepo=true` |
-| `settings.xml` | 一条 `mirrorOf=*` 的阿里云镜像,把所有仓库请求导向公网 |
+| `maven.config` | 自动追加 `-s .mvn/settings.xml` |
+| `settings.xml` | **同 id 覆盖** `landray-nexus` profile:保留 repo id `landray-public`,只把 URL 换成阿里云;外加一条同 id 的**空 `<server>`** |
 
-**为什么要有**:开发机全局 `settings.xml` 里的 `landray-nexus` profile 把公司内网私库排在 central 前面,而那台机器在当前网络连不通,每个依赖先撞一次 10s 超时。实测 `mvn verify` 从约 10 分钟降到 **17 秒**。
+**为什么要有**:开发机全局 `settings.xml` 里的 `landray-nexus` profile 默认激活,把公司内网私库排在 central 前面,而那台机器在当前网络连不通,每个依赖先撞一次超时。实测 `mvn verify` 从约 10 分钟降到 **15 秒**。
 
-**刻意不写 `localRepository`**:`-s` 指定的是**用户级** settings,全局 settings 仍会合并且用户级优先;`localRepository` 恰好定义在全局那份里,留空即可继承。这样仓库里不出现任何人的私人磁盘路径,团队各用各的本地仓库。**凭据同理,一律不进仓库。**
+**为什么是同 id 覆盖而不是加 `mirrorOf=*` 的 mirror**:mirror 会改变构件的来源 repo id,而 Maven 给每个构件写 `_remote.repositories` 记录来源;离线模式(`mvn -o`)要求该记录里存在当前启用的某个 id,否则报 `present, but unavailable`。本机实测本地仓库有 57989 条绑在 `landray-public` 上,改 id 就意味着这批构件在离线下集体失效(联网构建会逐个重新验证并追写记录,最终自愈,但白付一整轮开销)。**保留 id、只换 URL 就没有这些问题。**
 
-`maven.config` 有两个反直觉的地方,改之前先知道:**一行只能放一个参数**(`-s xxx` 写一行会被当成一个带空格的怪值),**不支持 `${maven.projectBasedir}` 展开**(但相对路径本来就按项目根目录解析,直接写 `.mvn/settings.xml` 即可)。
+**空 `<server>` 不是可选项**:Maven 的凭证按 repo id 匹配、不看 URL。保留 `landray-public` 这个 id 又把 URL 指向阿里云,Maven 会把公司私服的账号密码用 Basic Auth 发给阿里云。必须用同 id 空 server 顶掉,生效配置里凭证字段数应为 0。
+
+**刻意不写 `localRepository`**:`-s` 指定的是**用户级** settings,全局 settings 仍会合并且用户级优先;`localRepository` 恰好定义在全局那份里,留空即可继承。这样仓库里不出现任何人的私人磁盘路径。**凭据同理,一律不进仓库。**
+
+`maven.config` 两个反直觉的地方,改之前先知道:
+
+1. **一行只能放一个参数**(`-s xxx` 写一行会被当成一个带空格的怪值)。
+2. **`-s` 的相对路径按当前工作目录解析,不是项目根目录**,也不支持 `${maven.projectBasedir}` 展开。所以 **`mvn` 必须在 `backend/` 下跑**;在仓库根跑 `mvn -f backend/pom.xml` 会去找 `<仓库根>/.mvn/settings.xml` 然后直接报 `The specified user settings file does not exist`。项目里所有入口都已保证这点(本文件写的是 `cd backend && mvn verify`,`scripts/check.mjs` 与 `dev.mjs` 都显式设了 `cwd`)。
+
+三条验证,改完这两个文件必须都过:
+
+```bash
+mvn -o help:evaluate -Dexpression=settings.localRepository -q -DforceStdout        # 离线可用
+mvn -o help:effective-settings | grep -A2 "<id>landray-public</id>"                # URL 真换了
+mvn -o help:effective-settings | sed -n '/<servers>/,/<\/servers>/p' | grep -cE "<username>|<password>"   # 必须是 0
+```
+
+完整背景与可移植版本见 `mcp-factory/docs/20260802214805_Maven仓库与内网私库踩坑与解法.md`。
+
+### 9.2 JDK 21 的 agent 规矩
+
+**测试侧必须显式挂 Mockito agent,不许用 `-XX:+EnableDynamicAgentLoading` 糊过去。**
+
+JDK 21(JEP 451)对运行时动态挂 Java agent 发告警,并明确**将来会默认禁止**。Mockito 5 的 inline mock-maker 正是靠 byte-buddy-agent 自挂。`EnableDynamicAgentLoading` 只是把告警藏起来,升 JDK 那天会直接失败。pom 里已按 Mockito 官方做法配好:
+
+```xml
+<argLine>-javaagent:${org.mockito:mockito-core:jar} -Xshare:off @{argLine}</argLine>
+```
+
+三个部分缺一不可,改 surefire 配置时不要顺手删掉任何一个:
+
+- `-javaagent:...` 显式挂载,`mockito-core` 的 MANIFEST 有 `Premain-Class`,路径由 `maven-dependency-plugin` 的 `properties` 目标提供。
+- `-Xshare:off` 消除随之而来的 CDS 告警(agent 往 bootstrap classpath 追加内容,类数据共享失效)。
+- **`@{argLine}` 是覆盖率的命脉**:JaCoCo 把 `-javaagent` 写进 `argLine` 属性,而在 surefire 里显式配 `<argLine>` 会把它整个顶掉,结果是**覆盖率永远 0 而构建照样绿**。
+
+**运行时刻意不加 `--add-opens` / `--add-exports`。** 实测这套栈(Spring Boot 4.1 + JDK 21)起容器、连库、跑 Flyway、发请求全程无反射告警。预先撒网只会削弱封装,并把"哪天真出反射问题"的信号提前屏蔽掉 —— 等真报 `InaccessibleObjectException` 再按报错精确加那一条。
+
+**不要在 JDK 21 上开虚拟线程**(`spring.threads.virtual.enabled`)。JDK 21 的虚拟线程遇到 `synchronized` 会 pin 住载体线程,而 HikariCP 内部大量使用 `synchronized`,高并发下会退化得比平台线程还差。JEP 491 修了这个问题,但那是 JDK 24。

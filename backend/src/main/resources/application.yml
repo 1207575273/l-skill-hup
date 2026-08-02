@@ -1,86 +1,13 @@
+# 这个文件只做一件事:决定激活哪个 profile,值从环境变量读。
+#
+# 【为什么这里几乎是空的】
+# 其余配置一律**全量重复**在 application-dev.yml 与 application-prod.yml 里,
+# 刻意不抽公共段。抽公共段看着 DRY,代价是每次想给某个环境做精细化调整,
+# 都要先判断"这条在不在公共段、改了会不会波及另一个环境" —— 而两个环境本来
+# 就该能独立演进。这里的重复是特性,不是缺陷。
+#
+# 改配置的规矩:**一个环境改了,另一个环境要么同步改、要么明确决定不改**,
+# 不许因为"公共段里已经有了"而漏掉其中一个。
 spring:
-  application:
-    name: skill-hub
   profiles:
-    # 只有 dev 与 prod 两个环境,没有 test / staging
-    default: dev
-  servlet:
-    multipart:
-      # skill 包是几十 KB 到几 MB 的 zip,给足余量但不放任
-      max-file-size: 32MB
-      max-request-size: 64MB
-
-server:
-  port: ${SERVER_PORT:18080}
-  servlet:
-    # 后端独立 context,前端 vite.config.ts 的 base 必须同步为 /skillhub/
-    context-path: /skillhub
-
-mybatis:
-  mapper-locations: classpath:mapper/*.xml
-  configuration:
-    map-underscore-to-camel-case: true
-
-management:
-  endpoints:
-    web:
-      exposure:
-        # 只开 health,给容器 HEALTHCHECK 用。多开一个端点就是多一份攻击面。
-        include: health
-  endpoint:
-    health:
-      # 不对外泄漏依赖组件的细节(DB 地址、磁盘路径等)
-      show-details: never
-
-# ============================================================
-# 日志:控制台给人看,文件给机器看
-# ============================================================
-# 控制台 = 人类可读单行文本;文件 = 一行一个 JSON(JSONL)。
-# 两者由 Spring Boot 4 原生的结构化日志支持提供,不引 logstash-logback-encoder,
-# 也不写 logback-spring.xml —— 能用配置表达的就不要用 XML。一旦引入 XML,
-# Spring Boot 的这些 logging.* 属性大半会失效,后来人改配置改不动却找不到原因。
-logging:
-  level:
-    root: INFO
-    com.landray.skillhub: INFO
-
-  # 人类可读格式。traceId 放在最前面,肉眼串一次请求靠它。
-  # %wEx 是 Spring Boot 的异常转换器,会折叠框架栈帧。
-  pattern:
-    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faded} %clr(%5p) %clr([%X{traceId:-------------}]){magenta} %clr([%12.12t]){faded} %clr(%-44.44logger{43}){cyan} %clr(:){faded} %m%n%wEx"
-
-  # JSONL 落盘。LOG_ROOT 在容器里指向挂了命名卷的 /app/logs。
-  file:
-    name: ${LOG_ROOT:./logs}/skill-hub.jsonl
-
-  structured:
-    format:
-      # ECS(Elastic Common Schema):字段名是行业通用约定,
-      # 将来接 ELK / Loki / ClickHouse 都不用改应用侧。
-      file: ecs
-      # 控制台刻意不给 JSON —— 开发时用肉眼读 JSON 是自虐
-    ecs:
-      service:
-        # 不填会取 spring.application.name,这里显式写出来免得改名时漏掉
-        name: ${spring.application.name}
-        version: ${APP_VERSION:0.1.0}
-        environment: ${spring.profiles.active:dev}
-    json:
-      stacktrace:
-        # 根因放最前面。默认 root-last 要先翻到底部才看得到真正的异常,很浪费时间。
-        root: first
-        # 单条异常栈的字符上限。不设的话一次深层递归异常就能把当天的日志文件撑爆。
-        max-length: 8192
-        include-common-frames: false
-
-  logback:
-    rollingpolicy:
-      file-name-pattern: ${LOG_ROOT:./logs}/skill-hub.%d{yyyy-MM-dd}.%i.jsonl.gz
-      max-file-size: 100MB
-      # 保留 30 天且总量不超过 3GB,两个条件谁先触发谁生效 ——
-      # 只设天数挡不住某天被刷爆磁盘,只设总量又可能刚出问题就被滚掉。
-      max-history: 30
-      total-size-cap: 3GB
-      # 重启时清理超期文件:容器场景下进程可能长期不重启也可能频繁重启,
-      # 开着能保证任何一种情况下磁盘都不会越积越多。
-      clean-history-on-start: true
+    active: ${SPRING_PROFILES_ACTIVE:dev}

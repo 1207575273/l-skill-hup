@@ -1,13 +1,50 @@
-# dev = 本机。基座 PG 由 docker compose 起,宿主端口 15432(避开 WSL 里其他项目的 5432)。
-# 严禁把这里的连接指向 prod 数据库,理由见根 CLAUDE.md 第十节(Flyway 会直接改生产库结构)。
+# dev = 本机开发。与 application-prod.yml **全量重复**,刻意不抽公共段(理由见 application.yml)。
+#
+# 严禁把这里的连接指向 prod 数据库,哪怕只是换个库名。
+# Flyway 在启动时自动执行 DDL,配置写错一次就直接改了生产库结构,
+# 而 Flyway 铁律是"已执行的脚本不能改",污染 flyway_schema_history 后清理极其痛苦。
+
 spring:
+  application:
+    name: skill-hub
+
+  servlet:
+    multipart:
+      # skill 包是几十 KB 到几 MB 的 zip,给足余量但不放任
+      max-file-size: 32MB
+      max-request-size: 64MB
+
   datasource:
+    # 基座 PG 由 docker compose 起,宿主端口 15432(避开 WSL 里其他项目的 5432)
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:15432}/${DB_NAME:skillhub}
     username: ${DB_USER:skillhub}
     password: ${DB_PASSWORD:skillhub}
+
   flyway:
     enabled: true
+    # dev 库可能是从半途接手的,允许在非空库上打基线
     baseline-on-migrate: true
+
+server:
+  port: ${SERVER_PORT:18080}
+  servlet:
+    # 前端 vite.config.ts 的 base 必须同步为 /skillhub/
+    context-path: /skillhub
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      # dev 要看得见 DB / 磁盘的具体状态,排障方便
+      show-details: always
 
 skillhub:
   storage:
@@ -15,6 +52,41 @@ skillhub:
     type: local
     local-root: ${ARTIFACT_ROOT:./data/artifacts}
 
+# 日志:控制台人类可读,文件 JSONL(ECS)。形态与 prod 一致,量级按 dev 放宽。
 logging:
   level:
+    root: INFO
     com.landray.skillhub: DEBUG
+    # dev 打 SQL 与参数绑定,prod 一律关掉
+    org.mybatis: DEBUG
+
+  pattern:
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faded} %clr(%5p) %clr([%X{traceId:-------------}]){magenta} %clr([%12.12t]){faded} %clr(%-44.44logger{43}){cyan} %clr(:){faded} %m%n%wEx"
+
+  file:
+    name: ${LOG_ROOT:./logs}/skill-hub.jsonl
+
+  structured:
+    format:
+      # 控制台刻意不给 JSON —— 开发时用肉眼读 JSON 是自虐
+      file: ecs
+    ecs:
+      service:
+        name: ${spring.application.name}
+        version: ${APP_VERSION:0.1.0}
+        environment: dev
+    json:
+      stacktrace:
+        # 根因放最前面。默认 root-last 要先翻到底部才看得到真正的异常
+        root: first
+        max-length: 8192
+        include-common-frames: false
+
+  logback:
+    rollingpolicy:
+      file-name-pattern: ${LOG_ROOT:./logs}/skill-hub.%d{yyyy-MM-dd}.%i.jsonl.gz
+      max-file-size: 50MB
+      # dev 只留一周,本机不需要长期留存
+      max-history: 7
+      total-size-cap: 500MB
+      clean-history-on-start: true

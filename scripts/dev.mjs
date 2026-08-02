@@ -81,7 +81,9 @@ async function checkPorts() {
     const container = await whoPublishesPort(port)
     if (container !== null) {
       log.fail(`端口 ${port} 被容器 ${container.name} 占着(${container.image}),${who}起不来`)
-      log.info(`要收掉它:docker compose -f docker/docker-compose.yml stop app`)
+      // 直接给容器名,不给 compose 命令 —— 应用分了 dev / prod 两档服务,
+      // compose 不带 --profile 时看不见带 profile 的服务,`stop app` 会静默失败。
+      log.info(`要收掉它:docker stop ${container.name}`)
       continue
     }
 

@@ -120,9 +120,22 @@ USER skillhub
 
 EXPOSE 18080
 
+# 镜像的默认档是 prod —— 它是生产制品,裸 `docker run` 就该按生产语义走。
+# prod 的连接信息没有任何默认值,漏配会直接启动失败(响亮地失败,好过
+# 悄悄连上一个 dev 默认地址)。dev 档由 compose 的 app-dev 服务显式覆盖。
+#
+# 【JAVA_OPTS 里为什么没有 --add-opens / --add-exports】
+# JDK 17 起强封装默认开启,很多项目习惯性预先加一串 --add-opens。本项目**刻意不加**:
+# 实测 Spring Boot 4.1 + JDK 21 这套栈起容器、连库、跑 Flyway、发请求全程无反射告警,
+# 加了只会削弱封装,并且把"哪天真出反射问题"的信号提前屏蔽掉 —— 等真报
+# InaccessibleObjectException 时再按报错精确加那一条,不要预先撒网。
+#   MaxRAMPercentage    容器里按 cgroup 限额取堆,不写死 -Xmx
+#   ExitOnOutOfMemoryError  OOM 直接退出让编排重启,好过半死不活地continue
+#   HeapDumpOnOutOfMemoryError  退出前先留下堆转储,否则 OOM 现场什么都没有;
+#                               路径落在挂了命名卷的 /app/logs,容器重建不丢
 ENV SPRING_PROFILES_ACTIVE=prod \
     SERVER_PORT=18080 \
-    JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
+    JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs"
 
 # 探活走 actuator 而不是首页:首页是静态文件,DB 挂了也照样 200,探不出真问题。
 # start-period 给足 60s —— Flyway 迁移在启动时执行,冷启动比想象中慢。

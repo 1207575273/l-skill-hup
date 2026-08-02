@@ -2,38 +2,89 @@
 <!--
   项目级 Maven settings —— 由 .mvn/maven.config 的 `-s` 自动带上,不用手敲。
 
-  【为什么需要它】
-  开发机的全局 settings.xml 里有个 landray-nexus profile,把公司内网私库
-  `maven.landray.com.cn` 排在 central **前面**。那台机器在当前网络下连不通,
-  于是每个依赖都要先撞一次 10s 超时,`mvn verify` 慢到没法用,日志里刷满
-  "cached from a remote repository ID that is unavailable in current build context"。
+  【要解决什么】
+  开发机全局 settings.xml 有个默认激活的 landray-nexus profile,把公司内网私库
+  landray-public 排在 central **前面**。那台机器在当前网络连不通,于是每个待下载
+  构件都先撞一次超时,全量构建被拖到分钟级。
+
+  【为什么是"同 id 覆盖 profile"而不是加 mirror】
+  mirror 会**改变构件的来源 repo id**。Maven 的 EnhancedLocalRepositoryManager
+  给每个构件写一个 _remote.repositories 记录它来自哪个 repo id;离线模式(mvn -o)
+  要求这个记录里存在当前构建启用的某个 id,否则报
+      Non-resolvable import POM: ... (present, but unavailable)
+      Cannot access <mirror-id> in offline mode and the artifact has not been downloaded from it before
+  —— 构件明明就在本地,却因为"没从这个源下过"被拒用,而且报错指向依赖解析,
+  跟真实病因隔得很远。
+
+  本机实测:本地仓库 10492 个 _remote.repositories 里 57989 条绑在 landray-public
+  上。改 id 就意味着这些构件在离线模式下集体失效(联网构建会逐个重新验证并追写
+  记录,所以最终会自愈,但要白付一整轮重新验证的开销)。
+
+  保留 id、只换 URL 就没有这些问题:
+  - repo id 仍是 landray-public -> 本地已有构件继续可用 -> mvn -o 正常
+  - URL 指向阿里云             -> 不再走内网      -> 联网也不撞超时
 
   【为什么这份文件里没有 localRepository】
-  `-s` 指定的是**用户级** settings,Maven 仍然会读全局 settings
-  (${maven.home}/conf/settings.xml)并合并,用户级优先。
-  而 localRepository 恰好定义在全局那份里,所以这里留空即可自动继承,
-  **不用把任何人的私人磁盘路径硬编码进仓库**。团队里每个人的本地仓库各是各的。
+  `-s` 指定的是**用户级** settings,Maven 仍会读全局 settings 并合并、用户级优先。
+  localRepository 恰好定义在全局那份里,这里留空即可继承,
+  **不用把任何人的私人磁盘路径硬编码进仓库**。
 
-  【为什么 mirrorOf 是 *】
-  只写 `central` 拦不住 landray-public(它是另一个 repo id,不是 central)。
-  用 `*` 把所有仓库请求都导向阿里云,内网私库那条路径就彻底不走了。
-  本项目所有依赖都在公网仓库,没有任何私有构件,所以这么做没有副作用。
-  哪天真要从公司私库取包,把 mirrorOf 改成 `*,!landray-public` 即可放行那一个。
-
-  【这里刻意不放 <servers>】
-  凭据不进代码仓库。私库账号密码留在各自机器的全局 settings.xml 里。
+  完整背景与验证方法见 mcp-factory 的
+  docs/20260802214805_Maven仓库与内网私库踩坑与解法.md,那份是自包含可移植的。
 -->
 <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
 
-    <mirrors>
-        <mirror>
-            <id>aliyun-all</id>
-            <name>Aliyun Public (project-level, overrides everything)</name>
-            <url>https://maven.aliyun.com/repository/public</url>
-            <mirrorOf>*</mirrorOf>
-        </mirror>
-    </mirrors>
+    <!--
+      顶掉全局同 id 的 server。**这条不是可选项。**
+      Maven 的凭证按 repo id 匹配、不看 URL:保留了 landray-public 这个 id 又把
+      URL 指向阿里云,Maven 会把公司私服的账号密码用 Basic Auth 发给阿里云,
+      服务端解出来就是明文。故意不写 username / password,就是要把它顶成空的。
+    -->
+    <servers>
+        <server>
+            <id>landray-public</id>
+        </server>
+    </servers>
+
+    <!--
+      同 id 覆盖全局 profile:同 id 的 profile 完全取代全局同 id 条目。
+      全局 settings 的 activeProfiles 已经激活了 landray-nexus,这里不必重复声明。
+      **不要改成 <mirrors> 写法**,理由见文件头。
+    -->
+    <profiles>
+        <profile>
+            <id>landray-nexus</id>
+            <repositories>
+                <repository>
+                    <id>landray-public</id>
+                    <url>https://maven.aliyun.com/repository/public</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>true</enabled></snapshots>
+                </repository>
+                <repository>
+                    <id>central</id>
+                    <url>https://repo.maven.apache.org/maven2</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </repository>
+            </repositories>
+            <pluginRepositories>
+                <pluginRepository>
+                    <id>landray-public</id>
+                    <url>https://maven.aliyun.com/repository/public</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>true</enabled></snapshots>
+                </pluginRepository>
+                <pluginRepository>
+                    <id>central</id>
+                    <url>https://repo.maven.apache.org/maven2</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </pluginRepository>
+            </pluginRepositories>
+        </profile>
+    </profiles>
 
 </settings>
