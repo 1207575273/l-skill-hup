@@ -1,0 +1,36 @@
+# build context 由 Windows 侧 CLI 打包后发给 WSL 里的 daemon,
+# context 越小传输越快 —— 这里排的是"不该进镜像"和"进了会拖慢构建"两类。
+
+.git/
+.gitignore
+.claude/
+docs/
+
+# 依赖与构建产物一律在镜像内重新生成,拷进去只会污染缓存层
+node_modules/
+dist/
+dist-ssr/
+target/
+coverage/
+.vite/
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 运行时产物与密钥,绝不能进镜像
+logs/
+*.log
+data/
+artifacts/
+.env
+.env.*
+!.env.example
+
+# docker 自身的编排文件不需要进 context
+docker/docker-compose.yml
+docker/.env.example

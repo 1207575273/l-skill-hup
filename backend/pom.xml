@@ -51,6 +51,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
+        <!-- 只为容器 HEALTHCHECK 提供 /actuator/health:首页是静态文件,DB 挂了照样 200,探不出真问题。
+             端点暴露白名单在 application.yml 里,只开 health。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.mybatis.spring.boot</groupId>
@@ -58,6 +64,13 @@
             <version>${mybatis-starter.version}</version>
         </dependency>
 
+        <!-- Spring Boot 4 把自动配置拆成了多个模块,光有 flyway-core 迁移不会跑,
+             而且**不报任何错**,现象是应用正常启动、库里一张表都没有。
+             详见根 CLAUDE.md 踩坑点 8.2。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-flyway</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
