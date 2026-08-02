@@ -26,9 +26,9 @@
 | 层 | 选型 |
 | --- | --- |
 | JDK | 21 |
-| 后端 | Spring Boot 4.1.x + MyBatis(`mybatis-spring-boot-starter` 4.0.1)+ Flyway |
+| 后端 | Spring Boot 4.1.0 + MyBatis(`mybatis-spring-boot-starter` 4.1.0)+ Flyway |
 | 数据库 | PostgreSQL |
-| 前端 | React 18 + TypeScript strict + Vite + Tailwind CSS |
+| 前端 | React 19 + TypeScript strict + Vite 8 + Tailwind CSS 4 |
 | 前端状态 | TanStack Query(服务端数据)+ Zustand(客户端状态) |
 | 架构 | 轻量 DDD 锁代码形态,TDD 锁质量 |
 | 交付 | monorepo + Docker Compose |
@@ -119,13 +119,19 @@ skill-hub 分发的是**会被 Agent 执行的内容**,安全上没有"内部工
 - **根因**:Spring Boot 4 把自动配置拆成多个 JAR,starter 的依赖组织跟 3.x 不同。
 - **处理**:排依赖用 `mvn dependency:tree`,不要凭 3.x 记忆推断。
 
-### 8.3 MyBatis 与 Spring Boot 4 的版本对应
+### 8.3 MyBatis starter 的版本必须跟 Spring Boot 主线对齐
 
 - **现象**:`mybatis-spring-boot-starter` 3.0.x 在 Spring Boot 4 上启动失败。
-- **根因**:3.0.x 只支持 Spring Boot 3.2-3.5,支持 Spring Boot 4 的是 **4.0.0+**。
-- **处理**:锁 `4.0.1` 或更高,不要跟着老教程写 3.0.x。
+- **根因**:starter 版本号与 Spring Boot 主线一一对应 —— 3.0.x 对 Boot 3.2-3.5,4.0.x 对 Boot 4.0,**4.1.x 对 Boot 4.1**。
+- **处理**:本项目锁 `4.1.0`。升 Spring Boot 小版本时同步升 starter,不要跟着老教程写 3.0.x。
 
-### 8.4 Windows 是主开发环境
+### 8.4 Tailwind CSS 4 的配置方式与 v3 完全不同
+
+- **现象**:按网上教程建 `tailwind.config.js`、配 `postcss.config.js`、写 `@tailwind base/components/utilities`,样式不生效。
+- **根因**:v4 是重写版。**没有 `tailwind.config.ts`,不需要 PostCSS 配置**,改用 `@tailwindcss/vite` 插件;CSS 入口写 `@import "tailwindcss"`;设计 token 用 CSS 里的 `@theme {}` 块定义,不再是 JS 配置的 `theme.extend`。
+- **处理**:搜到的 Tailwind 教程默认都是 v3,先确认版本再抄。
+
+### 8.5 Windows 是主开发环境
 
 - 命令默认按 **Git Bash** 给;Git Bash 搞不定再降级 PowerShell,并明确标注。
 - 安装脚本 **PowerShell 是一等公民**,`.ps1` 与 `.sh` 两份都要写、都要测,不许只测一份。
@@ -163,6 +169,30 @@ requirements-analyst -> architect -> [backend-engineer | frontend-engineer] -> t
 ```
 
 数据卷用普通命名卷。`down` 不删数据,`down -v` 会删 —— 现阶段库里是 skill 制品与元数据,真删了让大家重新上传即可,不值得为此加部署复杂度。等哪天数据变得不可重建了(有了安装统计、审核记录、用户归属),再回头做备份或改 external。
+
+### 10.1 本机 Docker 在 WSL 里,不是 Docker Desktop
+
+**环境事实**(已实测,别再重新探测):
+
+- Docker Engine 28.1.1 装在 WSL 发行版 `Ubuntu-20.04` 内,**Windows 侧没有 docker CLI**。
+- 一个 `alpine/socat` 容器(`aip-docker-tcp`)把 unix socket 转发到 `127.0.0.1:2375`,`restart=always`。
+- WSL 开了 systemd,`dockerd` 已 `systemctl enable`。
+- 靠 WSL2 的 localhost 转发,**Windows 侧直接 `curl http://localhost:2375/version` 可通**。
+- `/etc/wsl.conf` 里 `appendWindowsPath=false`,所以 **WSL 内看不到 Windows 的 java/maven/node**。分工:WSL 只跑 Docker,开发工具链全在 Windows 侧。
+
+**已装好的东西**(不用重复安装):
+
+- Windows 侧静态 docker CLI 28.1.1 在 `~/.local/bin/docker.exe`(已在 PATH),compose 插件 v5.3.1 在 `~/.docker/cli-plugins/`。**不是 Docker Desktop**,顺带避开其商业授权问题。
+- docker context `wsl` 已创建并设为当前,指向 `tcp://localhost:2375`。Git Bash 里 `docker` / `docker compose` 直接可用,client 与 server 均为 28.1.1。
+- **Testcontainers 能自动识别 docker context**,所以连 `DOCKER_HOST` 都不用配。
+
+**两条纪律**:
+
+1. **不许用绑定挂载,一律命名卷。** 路径由 daemon 侧解释,而 daemon 在 WSL 里 —— compose 里写 `./data:/var/lib/...`,CLI 会展开成 `D:\...` 传过去,daemon 当 Linux 路径解析直接失败。同理 Testcontainers **禁用 `withFileSystemBind`**,需要往容器放文件用 classpath 复制(如 `withInitScript`)。
+   (`docker build` 不受影响:build context 是 CLI 侧打包后发给 daemon 的,Windows 路径正常,而且比在 WSL 里读 `/mnt/d` 更快。)
+2. **PG 对外映射 15432,不用 5432。** WSL 里同时跑着其他项目的容器(含另一个 postgres),5432 是最容易撞的端口。容器内仍是 5432,只改宿主映射。
+
+**唯一的人工环节**:WSL 按需启动,没起时 2375 不通。`scripts/*.mjs` 必须先探测 2375,不通就 `wsl.exe -d Ubuntu-20.04 -- true` 唤醒,不要让使用者自己排查。
 
 生产走多阶段 Dockerfile:node 阶段构建前端 -> 产物拷进 maven 阶段 -> `mvn package` -> jre 阶段运行。宿主机不需要装 JDK / Node / Maven。
 

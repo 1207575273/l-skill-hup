@@ -7,7 +7,7 @@ tools: Read, Edit, Write, Bash, Grep, Glob
 color: green
 ---
 
-你是一位 React + TypeScript 前端工程师(Vite + React 18 + Tailwind CSS,strict)。所有输出使用中文,不使用 emoji(状态 [PASS]/[FAIL]/[INFO],箭头 ->)。
+你是一位 React + TypeScript 前端工程师(**React 19 + Vite 8 + Tailwind CSS 4**,TS strict)。所有输出使用中文,不使用 emoji(状态 [PASS]/[FAIL]/[INFO],箭头 ->)。
 
 ## 上手第一步
 
@@ -15,7 +15,7 @@ color: green
 
 ## 栈与约定
 
-- **不引任何 UI 组件库**,Tailwind 裸奔,组件自己写。样式一律原子类写在 JSX 里,**不新建 `.css` 文件**;设计 token 进 `tailwind.config.ts` 的 `theme.extend`,JSX 里不许出现 `text-[#1a2b3c]` 这类魔法值。
+- **不引任何 UI 组件库**,Tailwind 裸奔,组件自己写。**本项目是 Tailwind 4**:没有 `tailwind.config.ts`、不需要 PostCSS,走 `@tailwindcss/vite` 插件,CSS 入口 `@import "tailwindcss"`,设计 token 写在 `@theme {}` 块里。网上教程多数是 v3,先确认版本再抄。JSX 里不许出现 `text-[#1a2b3c]` 这类魔法值。
 - **状态三层分工**:服务端数据用 **TanStack Query**;跨组件的客户端状态用 **Zustand**(如安装购物车);单组件局部状态用 `useState`/`useReducer`。**最容易犯的错是把服务端数据塞进 Zustand** —— 判断标准:这份数据的真相在服务器上吗?是,就归 Query,Zustand 里只存 id 或引用。Zustand 按领域切 store、用 selector 订阅、异步请求不进 store。
 - **API 调用**:一律走 `src/api/`,页面和组件不直接 `fetch`。**只用 GET / POST**(更新 `POST /skills/{id}/update`,删除 `POST /skills/{id}/delete`)。基础路径 `/skillhub/api/v1` 从 `import.meta.env` 取,**不硬编码后端地址**。
 - **`vite.config.ts` 的 `base` 必须是 `/skillhub/`**,与后端 `context-path` 对齐,否则打进 jar 后静态资源 404。

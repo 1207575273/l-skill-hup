@@ -2,7 +2,7 @@
 
 上层规则见根 `.claude/CLAUDE.md`,本文件只讲前端。中文,禁 emoji。
 
-栈:**React 18 + TypeScript strict + Vite + Tailwind CSS**。包管理器 pnpm,**只待在本目录**,根目录没有 workspace。
+栈:**React 19 + TypeScript strict + Vite 8 + Tailwind CSS 4**。包管理器 pnpm,**只待在本目录**,根目录没有 workspace。
 
 ## 一、目录结构
 
@@ -42,13 +42,30 @@ Zustand 用法约束:
 - action 写进 store 内部,组件不直接 `setState` 改结构。
 - store 只存状态与同步 action,**异步请求不进 store**,那是 Query 的活。
 
-## 四、Tailwind 规约
+## 四、Tailwind 规约(v4,与 v3 配置方式完全不同)
+
+**本项目是 Tailwind 4。搜到的教程绝大多数是 v3,先确认版本再抄。** v4 的关键差异:
+
+- **没有 `tailwind.config.ts`,不需要 PostCSS 配置**。走 `@tailwindcss/vite` 插件,在 `vite.config.ts` 里挂上即可。
+- CSS 入口写 `@import "tailwindcss";`,**不是** v3 的 `@tailwind base/components/utilities`。
+- **设计 token 用 CSS 的 `@theme {}` 块定义**,不是 JS 配置的 `theme.extend`:
+
+```css
+@import "tailwindcss";
+
+@theme {
+  --color-brand-500: oklch(0.62 0.19 259);
+  --radius-card: 0.75rem;
+}
+```
+
+规约:
 
 - **不引任何 UI 组件库**,组件自己写。
-- 样式一律用 Tailwind 原子类写在 JSX 里,**不新建 `.css` 文件**。确实需要的全局样式(字体、reset、CSS 变量)统一进 `styles/`。
+- 样式一律用原子类写在 JSX 里。全局样式(字体、reset、`@theme`)只允许出现在 `styles/` 的入口文件里,**不新建其他 `.css` 文件**。
 - 重复出现的类名组合抽成组件,不抽成 `@apply`。`@apply` 只用于确实无法组件化的场景。
-- 颜色、间距、圆角等设计 token 走 `tailwind.config.ts` 的 `theme.extend`,不在 JSX 里散落魔法值(`text-[#1a2b3c]` 这种一律不许)。
-- 深浅色支持用 Tailwind 的 `dark:` 变体。
+- 颜色、间距、圆角等 token 一律进 `@theme`,**JSX 里不许出现 `text-[#1a2b3c]` 这类魔法值**。
+- 深浅色支持用 `dark:` 变体。
 
 ## 五、API 层
 
