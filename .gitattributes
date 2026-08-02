@@ -1,0 +1,33 @@
+# 行尾统一。不能靠各人本机的 core.autocrlf,必须在仓库里写死。
+#
+# 两条硬需求决定了这个文件不是可选项:
+#   1. 本项目要分发 .sh 安装脚本 —— CRLF 会让 sh 报 "bad interpreter: /bin/bash^M",
+#      而报错信息完全看不出是行尾问题,排查成本极高。
+#   2. 后端 Spotless 的 lineEndings 默认策略是 GIT_ATTRIBUTES,没有这个文件时
+#      它和 Windows 的 core.autocrlf=true 会打架,`mvn verify` 在 validate 阶段就挂。
+
+# 默认:仓库里存 LF,工作区也检出 LF
+* text=auto eol=lf
+
+# PowerShell / cmd 在 Windows 上是一等公民,保持 CRLF
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# 显式兜一道:shell 脚本无论如何都是 LF
+*.sh text eol=lf
+
+# 二进制,不做任何行尾转换
+*.jar   binary
+*.zip   binary
+*.gz    binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.pdf   binary

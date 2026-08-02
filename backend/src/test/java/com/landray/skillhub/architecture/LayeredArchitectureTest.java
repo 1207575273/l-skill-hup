@@ -62,10 +62,20 @@ class LayeredArchitectureTest {
             .haveSimpleNameEndingWith("Mapper")
             .because("MyBatis Mapper 只许住在 infrastructure,上层只认 domain.repository 接口");
 
-    /** 整体分层校验,兜住上面几条没覆盖到的组合。 */
+    /**
+     * 整体分层校验,兜住上面几条没覆盖到的组合。
+     *
+     * <p>{@code withOptionalLayers(true)} 是必须的:项目按层逐步落地,某一层还没开始写时它是空的,
+     * 默认行为会把"空层"当成违规报错。这条规则该在<b>有人违反依赖方向</b>时红,而不是在某层还没写时红 ——
+     * 后者会逼着人去关掉规则,那才是真正的损失。
+     *
+     * <p>代价是:包名写错会让对应层静默变空、规则形同虚设。所以四个层的包名以第一节的目录结构为准,
+     * 改包名时必须同步改这里。
+     */
     @ArchTest
     static final ArchRule layersMustRespectDependencyDirection = layeredArchitecture()
             .consideringOnlyDependenciesInLayers()
+            .withOptionalLayers(true)
             .layer("Interfaces")
             .definedBy("..interfaces..")
             .layer("Application")
