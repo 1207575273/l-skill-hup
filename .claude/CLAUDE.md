@@ -49,7 +49,7 @@ l-skill-hup/
 ├── scripts/*.mjs           统一入口,零依赖,node 直接跑
 ├── docker/
 │   ├── Dockerfile                  多阶段:node 构建前端 -> maven 构建后端 -> jre 运行
-│   └── docker-compose.yml          单文件,用 profiles 区分 infra / full
+│   └── docker-compose.yml          就这一个文件,dev 只起 postgres,prod 起全部
 └── docs/                   持久化文档,归集规范见 docs/README.md
 ```
 
@@ -151,32 +151,18 @@ requirements-analyst -> architect -> [backend-engineer | frontend-engineer] -> t
 | 应用 | IDE 或 `mvn spring-boot:run` 直接跑,热重载 | 容器内跑打好的 jar |
 | 前端 | Vite dev server + proxy | 已打进 jar,同源托管 |
 
-**dev 和 prod 各跑各的实例,一份 compose 定义两边共用**(同一个 PG 版本、同一套初始化),用 profiles 区分:
-
-```yaml
-services:
-  postgres:
-    profiles: ["infra", "full"]
-  app:
-    profiles: ["full"]
-
-volumes:
-  pgdata:
-    external: true          # 见下,不许改成非 external
-    name: skillhub_pgdata
-```
+**dev 和 prod 各跑各的实例,一份 `docker/docker-compose.yml` 两边共用**(同一个 PG 版本、同一套初始化)。就一个文件,不拆、不用 profiles、不用 external 卷 —— dev 起 `postgres` 一个 service,prod 起全部。
 
 **严禁 dev 连 prod 的数据库,哪怕只是换个库名。** 理由是 Flyway:迁移在应用启动时自动执行 DDL,共用实例时配置写错一次就直接改了生产库结构,而 Flyway 铁律是"已执行的脚本不能改",污染 `flyway_schema_history` 后清理极其痛苦。这是迟早会发生一次的事故,不是靠小心能避免的。何况 Testcontainers 本来就要求本地有 Docker,多起一个 PG 容器的边际成本接近零。
 
-**PG 数据卷必须声明为 `external`。** Compose 规范明确"external 的卷永不被移除",这样 `docker compose down -v` 无论带什么 profile 都删不掉生产数据。代价是首次部署要手动 `docker volume create skillhub_pgdata` —— 这一步是一次性的,而正因为它一次性,后面所有 `down -v` 才安全。**不许为了省这一步把它改成普通卷。**
-
 ```
-首次部署 docker volume create skillhub_pgdata
-起基座   docker compose -f docker/docker-compose.yml --profile infra up -d
+起基座   docker compose -f docker/docker-compose.yml up -d postgres
 开发     node scripts/dev.mjs          并行起后端 + Vite,带端口探测
 自查     node scripts/check.mjs        后端 + 前端全量检查
-生产     docker compose -f docker/docker-compose.yml --profile full up -d --build
+生产     docker compose -f docker/docker-compose.yml up -d --build
 ```
+
+数据卷用普通命名卷。`down` 不删数据,`down -v` 会删 —— 现阶段库里是 skill 制品与元数据,真删了让大家重新上传即可,不值得为此加部署复杂度。等哪天数据变得不可重建了(有了安装统计、审核记录、用户归属),再回头做备份或改 external。
 
 生产走多阶段 Dockerfile:node 阶段构建前端 -> 产物拷进 maven 阶段 -> `mvn package` -> jre 阶段运行。宿主机不需要装 JDK / Node / Maven。
 
