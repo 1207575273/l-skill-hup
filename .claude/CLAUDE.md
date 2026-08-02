@@ -43,17 +43,29 @@
 
 ```
 l-skill-hup/
+├── README.md               对外的上手说明,面向"第一次进这个仓库的人"
+├── .gitattributes          行尾定死:源码 LF,.ps1/.bat CRLF,.sh 必须 LF
+├── .dockerignore           build context 由 CLI 打包发给 daemon,越小越快
 ├── .claude/CLAUDE.md       本文件,全项目宪法
 ├── backend/                Spring Boot,自带 CLAUDE.md
+│   └── .mvn/                       项目级 Maven 配置,详见 backend/CLAUDE.md 9.1
 ├── frontend/               React + Vite,自带 CLAUDE.md;pnpm 只待在这里
-├── scripts/*.mjs           统一入口,零依赖,node 直接跑
+├── scripts/                统一入口,零第三方依赖,node 直接跑
+│   ├── dev.mjs                     探测环境 -> 起基座 -> 并行跑后端与 Vite
+│   ├── check.mjs                   依次跑后端与前端的质量闸门,汇总并给退出码
+│   └── lib/                        共用:日志格式、子进程、docker/WSL 探测
 ├── docker/
 │   ├── Dockerfile                  多阶段:node 构建前端 -> maven 构建后端 -> jre 运行
-│   └── docker-compose.yml          就这一个文件,dev 只起 postgres,prod 起全部
+│   ├── docker-compose.yml          就这一个文件,dev 只起 postgres,prod 起全部
+│   └── .env.example                prod 部署前必须复制成 .env 并改掉 DB_PASSWORD
 └── docs/                   持久化文档,归集规范见 docs/README.md
 ```
 
 `backend/CLAUDE.md` 与 `frontend/CLAUDE.md` 是各自领域的细则,动对应目录前必读。
+
+**`README.md` 与本文件分工不同,不要互相复制**:README 面向使用者(这是什么、怎么跑起来),本文件面向改代码的人(为什么这么定、什么不许做)。约束只写在本文件里。
+
+`scripts/` 的两条纪律:**零第三方依赖**(只用 `node:` 内置模块),以及 **docker 探测唤醒必须内建**——理由见 10.1,那个报错看起来像 docker 配置坏了,不能让使用者自己排查。
 
 ## 四、通用编码规范
 
