@@ -653,7 +653,48 @@ WSL 里往往同时跑着多个项目的容器。**默认端口是最容易撞�
 | prune 之后 Windows 磁盘没变 | `ext4.vhdx` 只增不减 | `wsl --shutdown` 后 `Optimize-VHD` 或 `diskpart compact vdisk`,见 5.8 |
 | daemon 突然不可用且 WSL 正常 | 借用了别人项目的转发容器,被 `compose down` 带走 | 见 6.7,改为 dockerd 原生监听 |
 
-## 九、参考
+## 九、本机决策记录(2026-08-02)
+
+第 4.5 节把看门狗方案写全了,但**本机最终决定不启用它**。记录在此,免得以后有人照着 4.5 又装一遍。
+
+### 决策:不装看门狗,断了手动处理
+
+**理由**:看门狗以计划任务每分钟执行 `powershell.exe`,即使带 `-WindowStyle Hidden`,在已登录会话下仍会闪一下黑窗。一分钟闪一次,干扰远大于收益。
+
+**因此本机的实际状态**:
+
+| 项 | 状态 |
+| --- | --- |
+| dockerd 原生监听 `127.0.0.1:12375` | **保留**(daemon.json + systemd drop-in) |
+| docker context `wsl` 指向 12375 | **保留** |
+| `.wslconfig` 的 `vmIdleTimeout=-1` | **保留**(无副作用,能减少触发频率) |
+| 看门狗计划任务 | **不启用**,已删除 |
+| `~/.local/bin/wsl-watchdog.ps1` | 脚本保留在原处,想启用时按 4.5 注册任务即可 |
+
+**断连时怎么办**:手动一句,两秒。
+
+```bash
+wsl -d Ubuntu-20.04 -- true
+```
+
+**项目侧不受影响**:`scripts/*.mjs` 自带探测唤醒(见 6.3),跑项目时无感。看门狗本来只覆盖"手敲 docker 命令"这一个场景。
+
+### 一个容易误判的点:为什么"以前没这个问题"
+
+以前是**进 WSL 里面**敲 docker 命令 —— 那时存在活跃的 wsl 会话,idle 判定根本不成立,所以从来碰不到。
+
+改成从 Windows 侧用 CLI 之后,不再有活跃会话,这个**本来就存在的行为**才暴露出来。
+
+**这是"跨系统用 docker"这个便利本身的代价,与 daemon 的监听方式无关** —— 换成 socat 容器转发一样会这样。别把它误判成配置改坏了,去回滚 daemon.json 是白费功夫。
+
+### 如果以后确实想要无窗口的自动恢复
+
+两条路:
+
+1. 计划任务勾选"不管用户是否登录都运行"(`/RU` + `/RP`),任务在非交互会话执行,彻底无窗口。代价是要存密码,或改用 SYSTEM 账户 —— 但 WSL 实例是 per-user 的,SYSTEM 下行为不一定对,需实测。
+2. 用一个常驻的隐藏宿主进程轮询,而不是每分钟起一个新进程。
+
+## 十、参考
 
 - [docker context](https://docs.docker.com/engine/manage-resources/contexts/)
 - [Docker daemon 配置](https://docs.docker.com/reference/cli/dockerd/)

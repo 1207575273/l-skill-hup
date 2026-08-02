@@ -185,11 +185,15 @@ requirements-analyst -> architect -> [backend-engineer | frontend-engineer] -> t
 - **dockerd 原生监听 `tcp://127.0.0.1:12375`**(改了 `daemon.json` 的 hosts + systemd drop-in 清掉 `-H fd://`)。不经任何 socat 容器 —— 机器上那个 `aip-docker-tcp`(2375)属于**别的项目**,曾短暂借用过,已解耦,别再依赖它。
 - docker context `wsl` 已创建并设为当前,指向 12375。Git Bash 里 `docker` / `docker compose` 直接可用。
 - **Testcontainers 能自动识别 docker context**,所以连 `DOCKER_HOST` 都不用配。
-- 计划任务 `WSL-Watchdog`(每分钟)+ `~/.local/bin/wsl-watchdog.ps1`:探测不通就拉起 WSL。
+- `.wslconfig` 设了 `vmIdleTimeout=-1`。
 
-**WSL 会周期性自己关闭,这是 WSL 的已知缺陷不是配置问题**(microsoft/WSL#40363:Hyper-V VmSwitch 事件 285 与生命周期管理交互失败;微软无根本修复)。`vmIdleTimeout=-1` 和 WSL 内常驻 `sleep infinity` 都试过,**都挡不住**。所以方案是不阻止关闭、只快速恢复。
+**WSL 会周期性自己关闭,这是 WSL 的已知缺陷不是配置问题**(microsoft/WSL#40363:Hyper-V VmSwitch 事件 285 与生命周期管理交互失败;微软无根本修复)。`vmIdleTimeout=-1` 和 WSL 内常驻 `sleep infinity` 都实测过,**都挡不住**。
 
-**因此 `scripts/*.mjs` 必须自带探测唤醒**:先 `fetch http://localhost:12375/_ping`,不通就 `wsl.exe -d Ubuntu-20.04 -- /bin/true` 并轮询等待,**不要让使用者自己排查**——那个报错(`connectex: 目标计算机积极拒绝`)看起来像 docker 配置错了,极具误导性。
+**本机决策:不装看门狗**(每分钟闪黑窗太烦),断了就手动 `wsl -d Ubuntu-20.04 -- true`,两秒。**不要再提议装计划任务。**
+
+**因此 `scripts/*.mjs` 必须自带探测唤醒**——这是项目侧唯一的防线:先 `fetch http://localhost:12375/_ping`,不通就 `wsl.exe -d Ubuntu-20.04 -- /bin/true` 并轮询等待。**不要让使用者自己排查**,那个报错(`connectex: 目标计算机积极拒绝`)看起来像 docker 配置错了,极具误导性。
+
+顺带:遇到断连**不要去回滚 `daemon.json`**。以前没这问题是因为以前在 WSL 里面敲 docker(有活跃会话,idle 判定不成立),换成 Windows 侧 CLI 才暴露,与 daemon 监听方式无关。
 
 完整教程与排障见 `docs/20260802193801_Windows下WSL2-Docker开发环境实践.md`。
 
