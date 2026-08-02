@@ -1,0 +1,44 @@
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/timing.properties
+
+# Node / 前端
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+coverage/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+!.vscode/extensions.json
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 环境与密钥(连接信息一律走环境变量,不入库)
+.env
+.env.*
+!.env.example
+
+# 运行时产物
+logs/
+*.log
+/data/
+artifacts/
+
+# Claude Code 本地覆盖(CLAUDE.md 与 agents 要入库,本地权限设置不入库)
+.claude/settings.local.json
+.claude/agent-memory/
