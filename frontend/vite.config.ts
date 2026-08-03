@@ -1,24 +1,27 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
+import { resolveBaseRedirect } from './src/lib/devBaseRedirect'
 
 /**
- * 访问根路径时跳到 `/skillhub/`。
+ * 把 `/` 与 `/skillhub`(缺尾斜杠)都归一到 `/skillhub/`。
  *
- * 因为 `base` 是 `/skillhub/`,直接开 `http://localhost:5173/` 只会看到 Vite 那句
- * "The server is configured with a public base URL of /skillhub/ - did you mean to visit /skillhub/ instead?"
- * —— 它是提示不是错误,但每个人第一次打开都会撞上,而且得手动补路径。
+ * `base` 是 `/skillhub/`,而 Vite 只认带尾斜杠的完整前缀,所以这两种手输地址都会撞上
+ * "The server is configured with a public base URL of /skillhub/ - did you mean to visit /skillhub/ instead?"。
+ * 第一版只处理了 `/`,漏掉了缺尾斜杠这种 —— 而后者更常见:地址看起来完全正确,**手动刷新页面就会撞上**。
  *
- * 只跳精确的 `/`,不碰 `/skillhub/*` 与 `/@vite/*`、`/node_modules/*` 这些 Vite 自己的内部请求 ——
- * 前缀匹配会把 HMR 的 websocket 握手也一起重定向掉,症状是热更新静默失效。
+ * 判断逻辑在 `src/lib/devBaseRedirect.ts`,有测试。放在那里而不是内联进这个中间件,是因为这段判断的
+ * 风险不在"跳不跳"而在**跳过了头**:前缀匹配会把 HMR 握手与 `/@vite/*` 一起重定向掉,症状是热更新
+ * 静默失效 —— 不报错,只是"改了代码没反应"。
  */
-function redirectRootToBase(base: string): Plugin {
+function redirectToBase(base: string): Plugin {
   return {
-    name: 'skillhub:redirect-root-to-base',
+    name: 'skillhub:redirect-to-base',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        if (req.url === '/') {
-          res.writeHead(302, { Location: base })
+        const target = resolveBaseRedirect(req.url, base)
+        if (target !== null) {
+          res.writeHead(302, { Location: target })
           res.end()
           return
         }
@@ -34,7 +37,7 @@ export default defineConfig({
   base: '/skillhub/',
 
   // Tailwind 4 走 Vite 插件,没有 tailwind.config.ts,也不需要 PostCSS 配置。
-  plugins: [react(), tailwindcss(), redirectRootToBase('/skillhub/')],
+  plugins: [react(), tailwindcss(), redirectToBase('/skillhub/')],
 
   server: {
     port: 5173,
