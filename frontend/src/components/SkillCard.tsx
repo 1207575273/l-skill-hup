@@ -2,10 +2,7 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import type { SkillSummary } from '../api/types'
 import { pickAvatarColor } from './avatarColor'
-import { Button } from './Button'
 import { CertificationBadge } from './CertificationBadge'
-import { Dropdown } from './Dropdown'
-import { ChevronDownIcon } from './icons'
 import { TagChip } from './TagChip'
 import { formatDateOnly, truncateWithEllipsis } from './textFormat'
 
@@ -14,8 +11,11 @@ export interface SkillCardProps {
   /** 通常是 `/skills/${skill.id}`,由调用方拼,组件本身不猜路由结构。 */
   readonly detailHref: string
   /**
-   * "快速接入"下拉的菜单内容(展示约定 7.4:客户端/安装级别选项来自 `GET /clients`)。
-   * 本组件只负责展开/收起这个下拉,不知道也不获取选项数据 —— 那是调用方的 hook 的活。
+   * "快速接入"操作(展示约定 7.4),通常传 `<QuickInstallMenu skillId={skill.id} />`。
+   *
+   * <p><b>整个操作由调用方提供,卡片不包下拉外壳。</b>初版是"卡片提供下拉、这里只传面板内容",
+   * 结果与自带下拉的 `QuickInstallMenu` 叠成两层,用户要点两次"快速接入"才看到客户端列表 ——
+   * 那正好把 7.4 想省掉的点击又加了回来。卡片对它是什么一无所知,只负责摆在操作行里。
    */
   readonly quickInstallMenu: ReactNode
 }
@@ -115,22 +115,7 @@ export function SkillCard({ skill, detailHref, quickInstallMenu }: SkillCardProp
           >
             查看详情
           </Link>
-          <Dropdown
-            renderTrigger={({ onClick, open }) => (
-              <Button
-                variant="primary"
-                size="sm"
-                iconRight={<ChevronDownIcon className="h-4 w-4" />}
-                onClick={onClick}
-                aria-haspopup="menu"
-                aria-expanded={open}
-              >
-                快速接入
-              </Button>
-            )}
-          >
-            {quickInstallMenu}
-          </Dropdown>
+          {quickInstallMenu}
         </div>
       </div>
     </article>

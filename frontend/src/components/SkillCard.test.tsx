@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it } from 'vitest'
 import type { SkillSummary } from '../api/types'
@@ -122,10 +122,10 @@ describe('SkillCard', () => {
     expect(screen.getByRole('link', { name: '查看详情' })).toHaveAttribute('href', '/skills/42')
   })
 
-  it('should_show_injected_quick_install_menu_when_trigger_clicked', () => {
+  it('should_render_injected_quick_install_action_directly_when_rendered', () => {
+    // 卡片不再包下拉外壳,直接把整个"快速接入"操作摆进操作行 —— 包着会与自带下拉的
+    // QuickInstallMenu 叠成两层,用户要点两次才看到客户端列表(见 SkillCardProps 注释)。
     renderCard(buildSkill())
-
-    fireEvent.click(screen.getByRole('button', { name: /快速接入/ }))
 
     expect(screen.getByRole('button', { name: 'claude · global' })).toBeInTheDocument()
   })
