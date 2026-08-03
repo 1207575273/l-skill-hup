@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import com.landray.skillhub.shared.exception.ResourceConflictException;
 import com.landray.skillhub.shared.exception.ResourceNotFoundException;
@@ -47,6 +48,16 @@ public class GlobalExceptionHandlerProbeController {
     @GetMapping("/test-support/validate-param")
     public void triggerParamValidationFailure(@RequestParam @NotBlank String value) {
         // 校验在到达方法体前就会失败,方法体不会被执行。
+    }
+
+    /**
+     * 真实场景下这个异常由 {@code DispatcherServlet} 解析 multipart 请求体阶段直接抛出,不会经过任何 Controller
+     * 方法体——这里用探针模拟"业务代码需要处理这个异常"的那一半(交给 {@link GlobalExceptionHandler}),不模拟
+     * "什么时候会被抛出"那一半。
+     */
+    @GetMapping("/test-support/upload-too-large")
+    public void triggerUploadTooLarge() {
+        throw new MaxUploadSizeExceededException(33_554_432L);
     }
 
     public record ProbeRequest(@NotBlank String name) {}

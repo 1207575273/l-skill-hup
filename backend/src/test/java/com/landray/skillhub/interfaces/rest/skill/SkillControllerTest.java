@@ -8,23 +8,30 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.landray.skillhub.application.SkillApplicationService;
 import com.landray.skillhub.application.auth.AuthApplicationService;
+import com.landray.skillhub.application.auth.AuthenticatedUser;
+import com.landray.skillhub.application.upload.PrecheckResult;
+import com.landray.skillhub.application.upload.SkillUploadApplicationService;
 import com.landray.skillhub.domain.model.Certification;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillName;
@@ -32,7 +39,11 @@ import com.landray.skillhub.domain.model.SkillOwner;
 import com.landray.skillhub.domain.model.SkillSource;
 import com.landray.skillhub.domain.model.SkillStatus;
 import com.landray.skillhub.domain.model.SkillVersion;
+import com.landray.skillhub.domain.model.UserRole;
+import com.landray.skillhub.interfaces.rest.auth.AuthenticationInterceptor;
 import com.landray.skillhub.interfaces.rest.auth.CurrentUserAccessor;
+import com.landray.skillhub.interfaces.rest.auth.WebMvcAuthConfig;
+import com.landray.skillhub.shared.exception.AccessDeniedException;
 import com.landray.skillhub.shared.exception.ResourceNotFoundException;
 import com.landray.skillhub.shared.model.PageResult;
 
@@ -48,11 +59,17 @@ import com.landray.skillhub.shared.model.PageResult;
  * 直接挂在它身上,Mapper 接口会被扫描成 bean,却因为切片测试里没有 {@code SqlSessionFactory} 而启动失败
  * (实测过,且这类失败连 {@code excludeAutoConfiguration} 排除 {@code MybatisAutoConfiguration} 都救不了,
  * 因为 {@code @MapperScan} 是显式 {@code @Import} 注册,不受自动配置条件评估管辖)。详见该配置类的类注释。
+ *
+ * <p>写侧端点(precheck / 发布 / 改元数据 / 上下架)都标了 {@code @RequireLogin},需要
+ * {@code AuthenticationInterceptor} 真的生效才能测到 401/403 分支,所以额外 {@code @Import}
+ * {@link AuthenticationInterceptor} 与 {@link WebMvcAuthConfig}(与 {@code UserControllerTest} 同一套模式)。
  */
 @WebMvcTest(controllers = SkillController.class)
 @TestPropertySource(properties = "server.servlet.context-path=")
-@Import(CurrentUserAccessor.class)
+@Import({AuthenticationInterceptor.class, WebMvcAuthConfig.class, CurrentUserAccessor.class})
 class SkillControllerTest {
+
+    private static final String VALID_TOKEN = "valid-token";
 
     @Autowired
     private MockMvc mockMvc;
@@ -60,19 +77,27 @@ class SkillControllerTest {
     @MockitoBean
     private SkillApplicationService skillApplicationService;
 
+    @MockitoBean
+    private SkillUploadApplicationService skillUploadApplicationService;
+
     /**
-     * 这四个接口是匿名可访问的(业务建模文档 5.16 权限矩阵),本测试也不验鉴权。但 {@code AuthenticationInterceptor}
+     * 这四个只读接口是匿名可访问的(业务建模文档 5.16 权限矩阵)。但 {@code AuthenticationInterceptor}
      * 是 {@code HandlerInterceptor},属于 {@code @WebMvcTest} 切片<b>一定会纳入</b>的 web 层类型,它的依赖不给就
      * 整个上下文起不来。**每一个新的 Controller 切片测试都要带上这一行**,与该 Controller 是否需要登录无关。
      */
     @MockitoBean
     private AuthApplicationService authApplicationService;
 
+    private void stubValidSession(long userId, UserRole role) {
+        when(authApplicationService.resolveSession(VALID_TOKEN))
+                .thenReturn(Optional.of(new AuthenticatedUser(userId, role, 10L, 99L)));
+    }
+
     private Skill sampleSkill(SkillStatus status) {
         SkillVersion latestVersion = new SkillVersion(
-                10L, 1L, "1.0.0", 1024L, 3, List.of("Read", "Grep"), "# skill\n正文", "# readme", null,
-                Certification.CERTIFIED, 1L, Instant.parse("2026-01-01T00:00:00Z"), null, 2L,
-                Instant.parse("2026-01-01T00:00:00Z"));
+                10L, 1L, "1.0.0", "artifacts/1/1.0.0.zip", "0".repeat(64), "0".repeat(64), 1024L, 3,
+                List.of("Read", "Grep"), "# skill\n正文", "# readme", null, Certification.CERTIFIED, 1L,
+                Instant.parse("2026-01-01T00:00:00Z"), null, 2L, Instant.parse("2026-01-01T00:00:00Z"));
         return new Skill(
                 1L,
                 new SkillName("code-review"),
@@ -174,8 +199,9 @@ class SkillControllerTest {
     @DisplayName("版本列表接口返回每个版本的认证状态")
     void should_returnVersionList_whenListingVersions() throws Exception {
         SkillVersion version = new SkillVersion(
-                10L, 1L, "1.0.0", 1024L, 3, List.of(), null, null, null, Certification.REVOKED, 1L,
-                Instant.parse("2026-01-01T00:00:00Z"), "存在安全隐患", 2L, Instant.parse("2026-01-01T00:00:00Z"));
+                10L, 1L, "1.0.0", "artifacts/1/1.0.0.zip", "0".repeat(64), "0".repeat(64), 1024L, 3, List.of(), null,
+                null, null, Certification.REVOKED, 1L, Instant.parse("2026-01-01T00:00:00Z"), "存在安全隐患", 2L,
+                Instant.parse("2026-01-01T00:00:00Z"));
         when(skillApplicationService.listVersions(1L)).thenReturn(List.of(version));
 
         mockMvc.perform(get("/api/v1/skills/1/versions"))
@@ -194,5 +220,190 @@ class SkillControllerTest {
         mockMvc.perform(get("/api/v1/skills/999/versions"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("SKILL_NOT_FOUND"));
+    }
+
+    // ------------------------------------------------------------------
+    // precheck / 发布 / 改元数据 / 上下架——写侧,都要求登录
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("precheck 未带 token 时返回 401")
+    void should_returnUnauthorized_when_precheckCalledWithoutToken() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "skill.zip", "application/zip", "dummy".getBytes());
+
+        mockMvc.perform(multipart("/api/v1/skills/precheck").file(file)).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("precheck 登录后返回 application 层算出的结果")
+    void should_returnPrecheckResult_when_tokenValid() throws Exception {
+        stubValidSession(9L, UserRole.USER);
+        MockMultipartFile file = new MockMultipartFile("file", "skill.zip", "application/zip", "dummy".getBytes());
+        PrecheckResult result = new PrecheckResult(
+                true,
+                new PrecheckResult.ParsedInfo("foo", "描述", List.of("Read")),
+                "d".repeat(64),
+                3,
+                2048L,
+                true,
+                null,
+                false,
+                null,
+                null,
+                List.of());
+        when(skillUploadApplicationService.precheck(any(), any())).thenReturn(result);
+
+        mockMvc.perform(multipart("/api/v1/skills/precheck").file(file).header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.valid").value(true))
+                .andExpect(jsonPath("$.parsed.name").value("foo"))
+                .andExpect(jsonPath("$.contentDigest").value("d".repeat(64)))
+                .andExpect(jsonPath("$.duplicatedName").value(false));
+    }
+
+    @Test
+    @DisplayName("precheck 校验不通过时仍返回 200,携带 valid=false 与 violations")
+    void should_returnInvalidPrecheckResult_when_packageFailsValidation() throws Exception {
+        stubValidSession(9L, UserRole.USER);
+        MockMultipartFile file = new MockMultipartFile("file", "skill.zip", "application/zip", "dummy".getBytes());
+        PrecheckResult invalid = PrecheckResult.invalid("SKILL_PACKAGE_STRUCTURE_INVALID", "包内缺少顶层 SKILL.md");
+        when(skillUploadApplicationService.precheck(any(), any())).thenReturn(invalid);
+
+        mockMvc.perform(multipart("/api/v1/skills/precheck").file(file).header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.valid").value(false))
+                .andExpect(jsonPath("$.violations[0].code").value("SKILL_PACKAGE_STRUCTURE_INVALID"));
+    }
+
+    @Test
+    @DisplayName("创建 skill 未带 token 时返回 401")
+    void should_returnUnauthorized_when_createSkillCalledWithoutToken() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "skill.zip", "application/zip", "dummy".getBytes());
+
+        mockMvc.perform(multipart("/api/v1/skills").file(file).param("version", "1.0.0").param("source", "internal"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("创建 skill:登录后调用 application 层,返回详情")
+    void should_createSkill_when_tokenValid() throws Exception {
+        stubValidSession(9L, UserRole.USER);
+        MockMultipartFile file = new MockMultipartFile("file", "skill.zip", "application/zip", "dummy".getBytes());
+        when(skillUploadApplicationService.publishNewSkill(any())).thenReturn(sampleSkill(SkillStatus.PUBLISHED));
+
+        mockMvc.perform(multipart("/api/v1/skills")
+                        .file(file)
+                        .param("version", "1.0.0")
+                        .param("displayName", "展示名")
+                        .param("source", "internal")
+                        .param("curatedTagIds", "1")
+                        .header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("code-review"));
+    }
+
+    @Test
+    @DisplayName("发布新版本:登录后调用 application 层")
+    void should_createVersion_when_tokenValid() throws Exception {
+        stubValidSession(9L, UserRole.USER);
+        MockMultipartFile file = new MockMultipartFile("file", "skill.zip", "application/zip", "dummy".getBytes());
+        when(skillUploadApplicationService.publishNewVersion(eq(1L), any()))
+                .thenReturn(sampleSkill(SkillStatus.PUBLISHED));
+
+        mockMvc.perform(multipart("/api/v1/skills/1/versions")
+                        .file(file)
+                        .param("version", "1.1.0")
+                        .header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("code-review"));
+    }
+
+    @Test
+    @DisplayName("发布新版本:application 层因非 owner/ADMIN 拒绝时返回 403")
+    void should_returnForbidden_when_createVersionRejectedByApplicationLayer() throws Exception {
+        stubValidSession(999L, UserRole.USER);
+        MockMultipartFile file = new MockMultipartFile("file", "skill.zip", "application/zip", "dummy".getBytes());
+        when(skillUploadApplicationService.publishNewVersion(anyLong(), any()))
+                .thenThrow(new AccessDeniedException("只有 owner 或 ADMIN 能给这个 skill 发布新版本"));
+
+        mockMvc.perform(multipart("/api/v1/skills/1/versions")
+                        .file(file)
+                        .param("version", "1.1.0")
+                        .header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+    }
+
+    @Test
+    @DisplayName("改元数据未带 token 时返回 401")
+    void should_returnUnauthorized_when_updateSkillCalledWithoutToken() throws Exception {
+        mockMvc.perform(post("/api/v1/skills/1/update")
+                        .contentType("application/json")
+                        .content("{\"displayName\":\"新展示名\",\"source\":\"internal\",\"curatedTagIds\":[1]}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("改元数据:登录后调用 application 层")
+    void should_updateSkill_when_tokenValid() throws Exception {
+        stubValidSession(2L, UserRole.USER);
+        when(skillApplicationService.updateMetadata(eq(1L), eq("新展示名"), eq("internal"), eq(List.of(1L)), any(), any()))
+                .thenReturn(sampleSkill(SkillStatus.PUBLISHED));
+
+        mockMvc.perform(post("/api/v1/skills/1/update")
+                        .contentType("application/json")
+                        .content("{\"displayName\":\"新展示名\",\"source\":\"internal\",\"curatedTagIds\":[1]}")
+                        .header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("code-review"));
+    }
+
+    @Test
+    @DisplayName("改元数据:application 层因非 owner/ADMIN 拒绝时返回 403")
+    void should_returnForbidden_when_updateSkillRejectedByApplicationLayer() throws Exception {
+        stubValidSession(999L, UserRole.USER);
+        when(skillApplicationService.updateMetadata(anyLong(), any(), any(), any(), any(), any()))
+                .thenThrow(new AccessDeniedException("只有 owner 或 ADMIN 能操作这个 skill"));
+
+        mockMvc.perform(post("/api/v1/skills/1/update")
+                        .contentType("application/json")
+                        .content("{\"displayName\":\"新展示名\",\"source\":\"internal\",\"curatedTagIds\":[1]}")
+                        .header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+    }
+
+    @Test
+    @DisplayName("改元数据:displayName 为空时返回 400")
+    void should_returnBadRequest_when_updateSkillWithBlankDisplayName() throws Exception {
+        stubValidSession(2L, UserRole.USER);
+
+        mockMvc.perform(post("/api/v1/skills/1/update")
+                        .contentType("application/json")
+                        .content("{\"displayName\":\"\",\"source\":\"internal\",\"curatedTagIds\":[1]}")
+                        .header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("下架:登录后调用 application 层")
+    void should_unlistSkill_when_tokenValid() throws Exception {
+        stubValidSession(2L, UserRole.USER);
+        when(skillApplicationService.unlist(eq(1L), any())).thenReturn(sampleSkill(SkillStatus.UNLISTED));
+
+        mockMvc.perform(post("/api/v1/skills/1/unlist").header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UNLISTED"));
+    }
+
+    @Test
+    @DisplayName("恢复:登录后调用 application 层")
+    void should_relistSkill_when_tokenValid() throws Exception {
+        stubValidSession(2L, UserRole.USER);
+        when(skillApplicationService.relist(eq(1L), any())).thenReturn(sampleSkill(SkillStatus.PUBLISHED));
+
+        mockMvc.perform(post("/api/v1/skills/1/relist").header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PUBLISHED"));
     }
 }

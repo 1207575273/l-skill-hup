@@ -1,11 +1,13 @@
 package com.landray.skillhub.infrastructure.persistence.mapper;
 
 import java.util.List;
+import java.util.Map;
 
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 import com.landray.skillhub.infrastructure.persistence.po.SkillDetailRow;
+import com.landray.skillhub.infrastructure.persistence.po.SkillDigestMatchRow;
 import com.landray.skillhub.infrastructure.persistence.po.SkillListRow;
 import com.landray.skillhub.infrastructure.persistence.po.SkillTagRow;
 import com.landray.skillhub.infrastructure.persistence.po.SkillVersionRow;
@@ -54,4 +56,34 @@ public interface SkillMapper {
     int countById(@Param("skillId") long skillId);
 
     List<SkillVersionRow> selectVersionsBySkillId(@Param("skillId") long skillId);
+
+    /** 复用 {@code selectDetailById} 同一份 resultMap,只是过滤条件换成 name(precheck 重名检测,业务建模文档 6.2)。 */
+    SkillDetailRow selectDetailByName(@Param("name") String name);
+
+    SkillDigestMatchRow selectVersionByContentDigest(@Param("contentDigest") String contentDigest);
+
+    String selectLatestVersionString(@Param("skillId") long skillId);
+
+    /** 见 {@code AppUserMapper} 类注释:{@code useGeneratedKeys} 需要把生成的 id 写回参数 Map,record 做不到。 */
+    int insertSkill(Map<String, Object> params);
+
+    int insertVersion(Map<String, Object> params);
+
+    int updateLatestVersionIfGreater(
+            @Param("skillId") long skillId,
+            @Param("versionId") long versionId,
+            @Param("version") String version,
+            @Param("description") String description,
+            @Param("cardExcerpt") String cardExcerpt);
+
+    List<Long> selectTagIdsBySkillId(@Param("skillId") long skillId);
+
+    void deleteSkillTags(@Param("skillId") long skillId);
+
+    void insertSkillTags(@Param("skillId") long skillId, @Param("tagIds") List<Long> tagIds);
+
+    void updateMetadata(
+            @Param("skillId") long skillId, @Param("displayName") String displayName, @Param("source") String source);
+
+    void updateStatus(@Param("skillId") long skillId, @Param("status") String status);
 }

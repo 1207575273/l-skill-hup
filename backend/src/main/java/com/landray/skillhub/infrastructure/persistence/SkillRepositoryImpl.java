@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
 import com.landray.skillhub.domain.model.LikePatternEscaper;
@@ -14,15 +15,18 @@ import com.landray.skillhub.domain.model.SkillName;
 import com.landray.skillhub.domain.model.SkillOwner;
 import com.landray.skillhub.domain.model.SkillSearchCriteria;
 import com.landray.skillhub.domain.model.SkillSortOption;
+import com.landray.skillhub.domain.model.SkillSource;
 import com.landray.skillhub.domain.model.SkillStatus;
 import com.landray.skillhub.domain.model.SkillVersion;
 import com.landray.skillhub.domain.model.Tag;
 import com.landray.skillhub.domain.repository.SkillRepository;
 import com.landray.skillhub.infrastructure.persistence.mapper.SkillMapper;
 import com.landray.skillhub.infrastructure.persistence.po.SkillDetailRow;
+import com.landray.skillhub.infrastructure.persistence.po.SkillDigestMatchRow;
 import com.landray.skillhub.infrastructure.persistence.po.SkillListRow;
 import com.landray.skillhub.infrastructure.persistence.po.SkillTagRow;
 import com.landray.skillhub.infrastructure.persistence.po.SkillVersionRow;
+import com.landray.skillhub.shared.exception.ResourceConflictException;
 import com.landray.skillhub.shared.model.PageResult;
 
 /**
@@ -84,6 +88,16 @@ public class SkillRepositoryImpl implements SkillRepository {
     }
 
     @Override
+    public Optional<Skill> findByName(String name) {
+        SkillDetailRow row = skillMapper.selectDetailByName(name);
+        if (row == null) {
+            return Optional.empty();
+        }
+        List<Tag> tags = fetchTagsBySkillIds(List.of(row.id())).getOrDefault(row.id(), List.of());
+        return Optional.of(toDomain(row, tags));
+    }
+
+    @Override
     public boolean existsById(long skillId) {
         return skillMapper.countById(skillId) > 0;
     }
@@ -93,6 +107,95 @@ public class SkillRepositoryImpl implements SkillRepository {
         return skillMapper.selectVersionsBySkillId(skillId).stream()
                 .map(SkillRepositoryImpl::toDomain)
                 .toList();
+    }
+
+    @Override
+    public Optional<SkillVersion> findVersionByContentDigest(String contentDigest) {
+        SkillDigestMatchRow row = skillMapper.selectVersionByContentDigest(contentDigest);
+        if (row == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new SkillVersion(
+                row.id(), row.skillId(), row.version(), null, null, null, 0L, 0, List.of(), null, null, null, null,
+                null, null, null, null, null));
+    }
+
+    @Override
+    public Optional<String> findLatestVersionString(long skillId) {
+        return Optional.ofNullable(skillMapper.selectLatestVersionString(skillId));
+    }
+
+    @Override
+    public long insertSkill(
+            SkillName name, String displayName, String description, SkillSource source, long ownerUserId,
+            String cardExcerpt) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("name", name.value());
+        params.put("displayName", displayName);
+        params.put("description", description);
+        params.put("source", source.name());
+        params.put("ownerUserId", ownerUserId);
+        params.put("cardExcerpt", cardExcerpt);
+        try {
+            skillMapper.insertSkill(params);
+        } catch (DuplicateKeyException e) {
+            throw new ResourceConflictException(
+                    "SKILL_NAME_DUPLICATED", "已存在同名 skill: " + name.value(), Map.of("name", name.value()));
+        }
+        return (Long) params.get("id");
+    }
+
+    @Override
+    public long insertVersion(SkillVersion draft) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("skillId", draft.skillId());
+        params.put("version", draft.version());
+        params.put("artifactKey", draft.artifactKey());
+        params.put("contentDigest", draft.contentDigest());
+        params.put("sha256", draft.sha256());
+        params.put("sizeBytes", draft.sizeBytes());
+        params.put("fileCount", draft.fileCount());
+        params.put("allowedTools", draft.allowedTools());
+        params.put("skillMdContent", draft.skillMdContent());
+        params.put("readmeContent", draft.readmeContent());
+        params.put("certification", draft.certification().name());
+        params.put("createdByUserId", draft.createdByUserId());
+        try {
+            skillMapper.insertVersion(params);
+        } catch (DuplicateKeyException e) {
+            throw new ResourceConflictException(
+                    "SKILL_VERSION_DUPLICATED",
+                    "该 skill 已存在版本 " + draft.version(),
+                    Map.of("skillId", draft.skillId(), "version", draft.version()));
+        }
+        return (Long) params.get("id");
+    }
+
+    @Override
+    public boolean updateLatestVersionIfGreater(
+            long skillId, long versionId, String version, String description, String cardExcerpt) {
+        int updated = skillMapper.updateLatestVersionIfGreater(skillId, versionId, version, description, cardExcerpt);
+        return updated > 0;
+    }
+
+    @Override
+    public List<Long> replaceTags(long skillId, List<Long> tagIds) {
+        List<Long> oldTagIds = skillMapper.selectTagIdsBySkillId(skillId);
+        skillMapper.deleteSkillTags(skillId);
+        if (!tagIds.isEmpty()) {
+            skillMapper.insertSkillTags(skillId, tagIds);
+        }
+        return oldTagIds;
+    }
+
+    @Override
+    public void updateMetadata(long skillId, String displayName, SkillSource source) {
+        skillMapper.updateMetadata(skillId, displayName, source.name());
+    }
+
+    @Override
+    public void updateStatus(long skillId, SkillStatus status) {
+        skillMapper.updateStatus(skillId, status.name());
     }
 
     private Map<Long, List<Tag>> fetchTagsBySkillIds(List<Long> skillIds) {
@@ -128,6 +231,9 @@ public class SkillRepositoryImpl implements SkillRepository {
                         row.latestVersionId(),
                         row.id(),
                         row.latestVersionVersion(),
+                        null,
+                        null,
+                        null,
                         0L,
                         0,
                         List.of(),
@@ -167,6 +273,9 @@ public class SkillRepositoryImpl implements SkillRepository {
                         row.latestVersionId(),
                         row.id(),
                         row.latestVersionVersion(),
+                        null,
+                        null,
+                        null,
                         row.latestVersionSizeBytes() == null ? 0L : row.latestVersionSizeBytes(),
                         row.latestVersionFileCount() == null ? 0 : row.latestVersionFileCount(),
                         row.latestVersionAllowedTools() == null ? List.of() : row.latestVersionAllowedTools(),
@@ -216,6 +325,9 @@ public class SkillRepositoryImpl implements SkillRepository {
                 row.id(),
                 null,
                 row.version(),
+                null,
+                null,
+                null,
                 row.sizeBytes(),
                 row.fileCount(),
                 List.of(),

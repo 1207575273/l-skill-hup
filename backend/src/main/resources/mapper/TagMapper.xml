@@ -36,4 +36,32 @@
         ORDER BY t.kind, t.sort_order, t.name
     </select>
 
+    <select id="selectByIds" resultType="com.landray.skillhub.domain.model.Tag">
+        SELECT id, name, kind, description, sort_order, created_by_user_id, created_at, updated_at
+        FROM tag
+        WHERE id IN
+        <foreach item="id" collection="ids" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <select id="selectByName" resultType="com.landray.skillhub.domain.model.Tag">
+        SELECT id, name, kind, description, sort_order, created_by_user_id, created_at, updated_at
+        FROM tag
+        WHERE name = #{name}
+    </select>
+
+    <!-- kind 恒为 FREE:CURATED 词条只能由 ADMIN 通过 P1 的标签治理接口创建,不会走这条自动创建路径。 -->
+    <insert id="insertFree" useGeneratedKeys="true" keyProperty="id" keyColumn="id" parameterType="map">
+        INSERT INTO tag (name, kind, created_by_user_id)
+        VALUES (#{name}, 'FREE', #{createdByUserId})
+    </insert>
+
+    <delete id="deleteFreeTagIfOrphaned">
+        DELETE FROM tag
+        WHERE id = #{tagId}
+          AND kind = 'FREE'
+          AND NOT EXISTS (SELECT 1 FROM skill_tag WHERE tag_id = #{tagId})
+    </delete>
+
 </mapper>

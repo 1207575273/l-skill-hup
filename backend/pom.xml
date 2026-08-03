@@ -72,6 +72,29 @@
             <artifactId>spring-security-crypto</artifactId>
         </dependency>
 
+        <!-- 解析 SKILL.md frontmatter(YAML)。不新增依赖——spring-boot-starter 自身编译期就传递依赖了
+             org.yaml:snakeyaml:2.6(用于 Boot 自己加载 YAML 配置),已用 mvn dependency:tree 核实。这里改为
+             显式声明,把"隐式享用别人拉进来的传递依赖"变成"有意识引入的直接依赖",版本仍交给
+             spring-boot-dependencies 的依赖管理,不在本 pom 里另写版本号。 -->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
+
+        <!-- zip-slip/zip 炸弹防线需要读取 zip 条目的 Unix 外部文件属性来判定符号链接
+             (业务建模文档 5.3 第 2 步"拒绝符号链接")。java.util.zip.ZipEntry **不暴露** external file
+             attributes,这是 JDK 标准库的已知限制,没有绕开的公开 API;手写解析 ZIP 中央目录来读这 4 个字节
+             属于"正是最容易写出安全 bug 的那类底层二进制解析",交给 commons-compress 这个久经考验的库更稳妥。
+             写(重新打包)仍然用 java.util.zip.ZipOutputStream(stdlib),不用 commons-compress——
+             业务建模文档 3.7 已经论证过 sha256 不追求可复现,没有必要为了写权限位换库;
+             这里只在**读**这一侧引入它,职责单一。版本用当前 aliyun 镜像上的最新稳定版,显式锁定
+             (该 artifact 不在 spring-boot-dependencies 的依赖管理范围内,必须自己写版本号)。 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-compress</artifactId>
+            <version>1.28.0</version>
+        </dependency>
+
         <!-- Spring Boot 4 把自动配置拆成了多个模块,光有 flyway-core 迁移不会跑,
              而且**不报任何错**,现象是应用正常启动、库里一张表都没有。
              详见根 CLAUDE.md 踩坑点 8.2。 -->

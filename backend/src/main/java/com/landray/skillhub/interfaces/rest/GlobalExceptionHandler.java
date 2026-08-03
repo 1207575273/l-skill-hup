@@ -19,6 +19,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import com.landray.skillhub.shared.exception.BusinessException;
 import com.landray.skillhub.shared.logging.TraceIdConstants;
@@ -36,10 +37,13 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private static final int HTTP_STATUS_BAD_REQUEST = 400;
+    private static final int HTTP_STATUS_PAYLOAD_TOO_LARGE = 413;
     private static final int HTTP_STATUS_INTERNAL_SERVER_ERROR = 500;
 
     private static final String VALIDATION_FAILED_MESSAGE = "请求参数不合法";
     private static final String GENERIC_INTERNAL_ERROR_MESSAGE = "服务器内部错误,请联系管理员并提供 traceId 排查";
+    private static final String UPLOAD_TOO_LARGE_CODE = "UPLOAD_TOO_LARGE";
+    private static final String UPLOAD_TOO_LARGE_MESSAGE = "上传文件超过大小上限";
 
     /** 业务异常已经是"预期内"的错误路径,由异常自身携带的 code / httpStatus / details 直接翻译成响应,不打 ERROR。 */
     @ExceptionHandler(BusinessException.class)
@@ -53,6 +57,22 @@ public class GlobalExceptionHandler {
                 traceId);
         ErrorResponse body = ErrorResponse.of(ex.code(), ex.getMessage(), traceId, ex.details());
         return ResponseEntity.status(ex.httpStatus()).body(body);
+    }
+
+    /**
+     * multipart 上传体积超过 {@code spring.servlet.multipart.max-file-size}(业务建模文档 5.2 七项上限之一)。
+     * 这个异常在 {@code DispatcherServlet} 解析请求体阶段就抛出,早于任何 Controller 方法执行,不属于
+     * {@link BusinessException} 体系,必须单独接一个分支——否则会落进兜底的 {@link Exception} 处理器,
+     * 变成一个 500,而这明明是一次用户输错了(文件太大)的可预期错误,该给 4xx(参照
+     * backend/CLAUDE.md 6.2:参数校验失败是 WARN,不是 ERROR)。
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ErrorResponse> handleMaxUploadSizeExceeded(
+            MaxUploadSizeExceededException ex, HttpServletRequest request) {
+        String traceId = resolveTraceId();
+        log.warn("上传文件超过大小上限, path={}, traceId={}", request.getRequestURI(), traceId);
+        ErrorResponse body = ErrorResponse.of(UPLOAD_TOO_LARGE_CODE, UPLOAD_TOO_LARGE_MESSAGE, traceId);
+        return ResponseEntity.status(HTTP_STATUS_PAYLOAD_TOO_LARGE).body(body);
     }
 
     /** {@code @Valid} 校验 {@code @RequestBody} 失败,字段级错误进 details。 */

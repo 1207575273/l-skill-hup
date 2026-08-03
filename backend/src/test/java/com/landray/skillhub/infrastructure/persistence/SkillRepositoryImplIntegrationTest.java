@@ -1,6 +1,7 @@
 package com.landray.skillhub.infrastructure.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.Array;
 import java.sql.Connection;
@@ -8,8 +9,14 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import javax.sql.DataSource;
 
@@ -26,11 +33,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.landray.skillhub.domain.model.Certification;
 import com.landray.skillhub.domain.model.Skill;
+import com.landray.skillhub.domain.model.SkillName;
 import com.landray.skillhub.domain.model.SkillSearchCriteria;
 import com.landray.skillhub.domain.model.SkillSortOption;
 import com.landray.skillhub.domain.model.SkillSource;
+import com.landray.skillhub.domain.model.SkillStatus;
 import com.landray.skillhub.domain.model.SkillVersion;
 import com.landray.skillhub.domain.repository.SkillRepository;
+import com.landray.skillhub.shared.exception.ResourceConflictException;
 import com.landray.skillhub.shared.model.PageResult;
 
 /**
@@ -359,6 +369,281 @@ class SkillRepositoryImplIntegrationTest {
             assertThat(versions).extracting(SkillVersion::version).containsExactly("1.1.0", "1.0.0");
             assertThat(versions.get(0).certification()).isEqualTo(Certification.CERTIFIED);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 写侧(上传管线任务新增):findByName / findVersionByContentDigest / findLatestVersionString /
+    // insertSkill / insertVersion / updateLatestVersionIfGreater / replaceTags / updateMetadata / updateStatus
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("按 name 查详情,能查到 owner 与最新版本")
+    void should_findSkillDetail_whenFindingByName() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            insertSkill(c, "find-by-name", "按名查找", "INTERNAL", owner, "PUBLISHED");
+
+            Optional<Skill> found = skillRepository.findByName("find-by-name");
+
+            assertThat(found).isPresent();
+            assertThat(found.get().owner().displayName()).isEqualTo("张三");
+        }
+    }
+
+    @Test
+    @DisplayName("name 不存在时返回空 Optional")
+    void should_returnEmpty_whenFindingByNameNotExists() {
+        assertThat(skillRepository.findByName("does-not-exist")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("按 content_digest 查到已有版本(precheck 的\"完全相同的包已存在\"判定)")
+    void should_findVersionByContentDigest_whenDigestMatches() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "digest-skill", "摘要匹配", "INTERNAL", owner, "PUBLISHED");
+            attachVersionWithDigest(c, skillId, "1.0.0", "abc123digest");
+
+            Optional<SkillVersion> found = skillRepository.findVersionByContentDigest("abc123digest");
+
+            assertThat(found).isPresent();
+            assertThat(found.get().skillId()).isEqualTo(skillId);
+            assertThat(found.get().version()).isEqualTo("1.0.0");
+        }
+    }
+
+    @Test
+    @DisplayName("content_digest 不存在时返回空 Optional")
+    void should_returnEmpty_whenContentDigestNotFound() {
+        assertThat(skillRepository.findVersionByContentDigest("no-such-digest")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("查最新版本号:有版本时返回,尚无版本时返回空")
+    void should_findLatestVersionString() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "latest-version-skill", "最新版本", "INTERNAL", owner, "PUBLISHED");
+
+            assertThat(skillRepository.findLatestVersionString(skillId)).isEmpty();
+
+            attachVersion(c, skillId, "1.0.0", NONE);
+
+            assertThat(skillRepository.findLatestVersionString(skillId)).contains("1.0.0");
+        }
+    }
+
+    @Test
+    @DisplayName("插入新 skill 成功,返回生成的 id")
+    void should_insertSkill_whenNameIsUnique() throws SQLException {
+        long owner = insertUser(dataSource.getConnection(), "张三", "80380486");
+
+        long skillId = skillRepository.insertSkill(
+                new SkillName("insert-skill-test"), "展示名", "描述", SkillSource.INTERNAL, owner, "摘要");
+
+        assertThat(skillId).isPositive();
+        assertThat(skillRepository.findByName("insert-skill-test")).isPresent();
+    }
+
+    @Test
+    @DisplayName("插入同名 skill 时抛 SKILL_NAME_DUPLICATED,不做先查后插")
+    void should_throwConflict_whenInsertingDuplicateSkillName() throws SQLException {
+        long owner = insertUser(dataSource.getConnection(), "张三", "80380486");
+        skillRepository.insertSkill(new SkillName("dup-name"), "展示名", "描述", SkillSource.INTERNAL, owner, "摘要");
+
+        assertThatThrownBy(() -> skillRepository.insertSkill(
+                        new SkillName("dup-name"), "另一个展示名", "另一个描述", SkillSource.COMMUNITY, owner, "摘要"))
+                .isInstanceOf(ResourceConflictException.class)
+                .satisfies(ex -> assertThat(((ResourceConflictException) ex).code()).isEqualTo("SKILL_NAME_DUPLICATED"));
+    }
+
+    @Test
+    @DisplayName("并发插入同名 skill:只有一个成功,另一个收到 SKILL_NAME_DUPLICATED(业务建模文档 5.14)")
+    void should_allowOnlyOneWinner_whenConcurrentlyInsertingSameSkillName() throws InterruptedException, SQLException {
+        long owner = insertUser(dataSource.getConnection(), "张三", "80380486");
+        int threadCount = 6;
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        try {
+            List<Future<Boolean>> futures = new ArrayList<>();
+            for (int i = 0; i < threadCount; i++) {
+                futures.add(executor.submit(() -> {
+                    startLatch.await();
+                    try {
+                        skillRepository.insertSkill(
+                                new SkillName("race-name"), "展示名", "描述", SkillSource.INTERNAL, owner, "摘要");
+                        return true;
+                    } catch (ResourceConflictException e) {
+                        return false;
+                    }
+                }));
+            }
+            startLatch.countDown();
+
+            long successCount = futures.stream()
+                    .map(future -> {
+                        try {
+                            return future.get(10, TimeUnit.SECONDS);
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    })
+                    .filter(Boolean::booleanValue)
+                    .count();
+
+            assertThat(successCount).isEqualTo(1);
+        } finally {
+            executor.shutdown();
+            executor.awaitTermination(10, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    @DisplayName("插入同一 skill 下重复版本号时抛 SKILL_VERSION_DUPLICATED")
+    void should_throwConflict_whenInsertingDuplicateVersion() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "dup-version-skill", "重复版本", "INTERNAL", owner, "PUBLISHED");
+            skillRepository.insertVersion(newVersionDraft(skillId, "1.0.0"));
+
+            assertThatThrownBy(() -> skillRepository.insertVersion(newVersionDraft(skillId, "1.0.0")))
+                    .isInstanceOf(ResourceConflictException.class)
+                    .satisfies(ex -> assertThat(((ResourceConflictException) ex).code())
+                            .isEqualTo("SKILL_VERSION_DUPLICATED"));
+        }
+    }
+
+    @Test
+    @DisplayName("latest_version_id 首次设置:原本为 null 时无条件更新")
+    void should_setLatestVersion_whenPreviouslyNull() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "first-latest-skill", "首次设置", "INTERNAL", owner, "PUBLISHED");
+            long versionId = skillRepository.insertVersion(newVersionDraft(skillId, "1.0.0"));
+
+            boolean updated =
+                    skillRepository.updateLatestVersionIfGreater(skillId, versionId, "1.0.0", "新描述", "新摘要");
+
+            assertThat(updated).isTrue();
+            assertThat(skillRepository.findLatestVersionString(skillId)).contains("1.0.0");
+        }
+    }
+
+    @Test
+    @DisplayName("latest_version_id 数值序比较:10.0.0 能正确覆盖 9.0.0,不按字符串序误判")
+    void should_updateLatestVersion_whenNewVersionIsNumericallyGreater() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "numeric-semver-skill", "数值序", "INTERNAL", owner, "PUBLISHED");
+            long v9 = skillRepository.insertVersion(newVersionDraft(skillId, "9.0.0"));
+            skillRepository.updateLatestVersionIfGreater(skillId, v9, "9.0.0", "d9", "e9");
+            long v10 = skillRepository.insertVersion(newVersionDraft(skillId, "10.0.0"));
+
+            boolean updated = skillRepository.updateLatestVersionIfGreater(skillId, v10, "10.0.0", "d10", "e10");
+
+            assertThat(updated).isTrue();
+            assertThat(skillRepository.findLatestVersionString(skillId)).contains("10.0.0");
+        }
+    }
+
+    @Test
+    @DisplayName("latest_version_id 带递增条件:传入不大于当前值的版本时不更新,返回 false")
+    void should_notUpdateLatestVersion_whenNewVersionIsNotGreater() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "not-greater-skill", "不递增", "INTERNAL", owner, "PUBLISHED");
+            long v2 = skillRepository.insertVersion(newVersionDraft(skillId, "2.0.0"));
+            skillRepository.updateLatestVersionIfGreater(skillId, v2, "2.0.0", "d2", "e2");
+            long v1 = skillRepository.insertVersion(newVersionDraft(skillId, "1.0.0"));
+
+            boolean updated = skillRepository.updateLatestVersionIfGreater(skillId, v1, "1.0.0", "d1", "e1");
+
+            assertThat(updated).isFalse();
+            assertThat(skillRepository.findLatestVersionString(skillId)).contains("2.0.0");
+        }
+    }
+
+    @Test
+    @DisplayName("整体替换标签:返回替换前的旧标签集合,新集合生效")
+    void should_replaceTags_andReturnOldTagIds() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "replace-tags-skill", "替换标签", "INTERNAL", owner, "PUBLISHED");
+            tagSkill(c, skillId, TAG_CODE_GENERATION);
+
+            List<Long> oldTagIds = skillRepository.replaceTags(skillId, List.of(TAG_CODE_REVIEW, TAG_TESTING));
+
+            assertThat(oldTagIds).containsExactly(TAG_CODE_GENERATION);
+            assertThat(skillRepository.findDetailById(skillId).orElseThrow().tags())
+                    .extracting(tag -> tag.id())
+                    .containsExactlyInAnyOrder(TAG_CODE_REVIEW, TAG_TESTING);
+        }
+    }
+
+    @Test
+    @DisplayName("改元数据:displayName / source 生效,name 不受影响")
+    void should_updateMetadata_withoutChangingName() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "update-metadata-skill", "旧展示名", "INTERNAL", owner, "PUBLISHED");
+
+            skillRepository.updateMetadata(skillId, "新展示名", SkillSource.COMMUNITY);
+
+            Skill updated = skillRepository.findDetailById(skillId).orElseThrow();
+            assertThat(updated.displayName()).isEqualTo("新展示名");
+            assertThat(updated.source()).isEqualTo(SkillSource.COMMUNITY);
+            assertThat(updated.name().value()).isEqualTo("update-metadata-skill");
+        }
+    }
+
+    @Test
+    @DisplayName("下架与恢复:只改 status")
+    void should_updateStatus_whenUnlistingAndRelisting() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "status-toggle-skill", "上下架", "INTERNAL", owner, "PUBLISHED");
+
+            skillRepository.updateStatus(skillId, SkillStatus.UNLISTED);
+            assertThat(skillRepository.findDetailById(skillId).orElseThrow().status()).isEqualTo(SkillStatus.UNLISTED);
+
+            skillRepository.updateStatus(skillId, SkillStatus.PUBLISHED);
+            assertThat(skillRepository.findDetailById(skillId).orElseThrow().status())
+                    .isEqualTo(SkillStatus.PUBLISHED);
+        }
+    }
+
+    private SkillVersion newVersionDraft(long skillId, String version) {
+        return new SkillVersion(
+                null, skillId, version, "artifacts/" + skillId + "/" + version + ".zip", "digest-" + version,
+                "sha-" + version, 100L, 1, List.of("Read"), "# skill\n正文", null, null, Certification.NONE, null,
+                null, null, 1L, null);
+    }
+
+    private long attachVersionWithDigest(Connection c, long skillId, String version, String contentDigest)
+            throws SQLException {
+        long versionId;
+        try (PreparedStatement ps = c.prepareStatement("INSERT INTO skill_version "
+                + "(skill_id, version, artifact_key, content_digest, sha256, size_bytes, file_count, "
+                + "allowed_tools, skill_md_content, readme_content, certification, created_by_user_id) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")) {
+            ps.setLong(1, skillId);
+            ps.setString(2, version);
+            ps.setString(3, "artifacts/" + skillId + "/" + version + ".zip");
+            ps.setString(4, contentDigest);
+            ps.setString(5, "0".repeat(64));
+            ps.setLong(6, 1024L);
+            ps.setInt(7, 3);
+            Array allowedTools = c.createArrayOf("text", new String[] {"Read"});
+            ps.setArray(8, allowedTools);
+            ps.setString(9, "# skill\n正文");
+            ps.setString(10, "# readme");
+            ps.setString(11, "NONE");
+            ps.setLong(12, 1L);
+            ResultSet rs = ps.executeQuery();
+            rs.next();
+            versionId = rs.getLong(1);
+        }
+        return versionId;
     }
 
     private SkillSearchCriteria defaultCriteria() {

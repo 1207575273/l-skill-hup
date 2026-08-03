@@ -3,6 +3,8 @@ package com.landray.skillhub.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -18,6 +20,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.landray.skillhub.application.auth.AuthenticatedUser;
 import com.landray.skillhub.domain.exception.InvalidSkillSortException;
 import com.landray.skillhub.domain.exception.InvalidSkillSourceException;
 import com.landray.skillhub.domain.model.Certification;
@@ -29,8 +32,11 @@ import com.landray.skillhub.domain.model.SkillSortOption;
 import com.landray.skillhub.domain.model.SkillSource;
 import com.landray.skillhub.domain.model.SkillStatus;
 import com.landray.skillhub.domain.model.SkillVersion;
+import com.landray.skillhub.domain.model.UserRole;
 import com.landray.skillhub.domain.repository.SkillRepository;
+import com.landray.skillhub.shared.exception.AccessDeniedException;
 import com.landray.skillhub.shared.exception.ResourceNotFoundException;
+import com.landray.skillhub.shared.logging.AuditLog;
 import com.landray.skillhub.shared.model.PageResult;
 
 /**
@@ -42,11 +48,17 @@ class SkillApplicationServiceTest {
     @Mock
     private SkillRepository skillRepository;
 
+    @Mock
+    private SkillTagAssignmentService tagAssignmentService;
+
+    @Mock
+    private AuditLog auditLog;
+
     private SkillApplicationService service;
 
     @BeforeEach
     void setUp() {
-        service = new SkillApplicationService(skillRepository);
+        service = new SkillApplicationService(skillRepository, tagAssignmentService, auditLog);
     }
 
     private Skill sampleSkill() {
@@ -204,12 +216,95 @@ class SkillApplicationServiceTest {
     void should_returnVersions_when_skillExists() {
         when(skillRepository.existsById(1L)).thenReturn(true);
         SkillVersion version = new SkillVersion(
-                1L, 1L, "1.0.0", 100L, 1, List.of(), null, null, null, Certification.NONE, null, null, null, 1L,
-                null);
+                1L, 1L, "1.0.0", "artifacts/1/1.0.0.zip", "0".repeat(64), "0".repeat(64), 100L, 1, List.of(), null,
+                null, null, Certification.NONE, null, null, null, 1L, null);
         when(skillRepository.findVersionsBySkillId(1L)).thenReturn(List.of(version));
 
         List<SkillVersion> result = service.listVersions(1L);
 
         assertThat(result).containsExactly(version);
+    }
+
+    // ------------------------------------------------------------------
+    // updateMetadata / unlist / relist
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("改元数据:owner 本人可以操作")
+    void should_updateMetadata_when_actingUserIsOwner() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        when(tagAssignmentService.resolveTagIds(List.of(1L), List.of(), 2L)).thenReturn(List.of(1L));
+        AuthenticatedUser owner = new AuthenticatedUser(2L, UserRole.USER, 10L, 100L);
+
+        Skill result =
+                service.updateMetadata(1L, "新展示名", "community", List.of(1L), List.of(), owner);
+
+        assertThat(result).isNotNull();
+        verify(skillRepository).updateMetadata(1L, "新展示名", SkillSource.COMMUNITY);
+        verify(tagAssignmentService).replaceSkillTags(1L, List.of(1L));
+    }
+
+    @Test
+    @DisplayName("改元数据:ADMIN 可以操作非自己拥有的 skill")
+    void should_updateMetadata_when_actingUserIsAdmin() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        when(tagAssignmentService.resolveTagIds(any(), any(), anyLong())).thenReturn(List.of(1L));
+        AuthenticatedUser admin = new AuthenticatedUser(999L, UserRole.ADMIN, 10L, 100L);
+
+        assertThat(service.updateMetadata(1L, "新展示名", "community", List.of(1L), List.of(), admin))
+                .isNotNull();
+    }
+
+    @Test
+    @DisplayName("改元数据:既非 owner 也非 ADMIN 时拒绝")
+    void should_rejectUpdateMetadata_when_actingUserIsNeitherOwnerNorAdmin() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        AuthenticatedUser stranger = new AuthenticatedUser(999L, UserRole.USER, 10L, 100L);
+
+        assertThatThrownBy(() -> service.updateMetadata(1L, "新展示名", "community", List.of(1L), List.of(), stranger))
+                .isInstanceOf(AccessDeniedException.class);
+        verifyNoInteractions(tagAssignmentService);
+    }
+
+    @Test
+    @DisplayName("改元数据:skill 不存在时返回 404")
+    void should_throwNotFound_when_updatingMissingSkill() {
+        when(skillRepository.findDetailById(999L)).thenReturn(Optional.empty());
+        AuthenticatedUser owner = new AuthenticatedUser(2L, UserRole.USER, 10L, 100L);
+
+        assertThatThrownBy(() -> service.updateMetadata(999L, "x", "internal", List.of(1L), List.of(), owner))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("下架:owner 可以操作,只改 status")
+    void should_unlistSkill_when_actingUserIsOwner() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        AuthenticatedUser owner = new AuthenticatedUser(2L, UserRole.USER, 10L, 100L);
+
+        assertThat(service.unlist(1L, owner)).isNotNull();
+
+        verify(skillRepository).updateStatus(1L, SkillStatus.UNLISTED);
+    }
+
+    @Test
+    @DisplayName("下架:既非 owner 也非 ADMIN 时拒绝")
+    void should_rejectUnlist_when_actingUserIsNeitherOwnerNorAdmin() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        AuthenticatedUser stranger = new AuthenticatedUser(999L, UserRole.USER, 10L, 100L);
+
+        assertThatThrownBy(() -> service.unlist(1L, stranger)).isInstanceOf(AccessDeniedException.class);
+        verify(skillRepository, never()).updateStatus(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("恢复:owner 可以操作,只改 status")
+    void should_relistSkill_when_actingUserIsOwner() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        AuthenticatedUser owner = new AuthenticatedUser(2L, UserRole.USER, 10L, 100L);
+
+        assertThat(service.relist(1L, owner)).isNotNull();
+
+        verify(skillRepository).updateStatus(1L, SkillStatus.PUBLISHED);
     }
 }

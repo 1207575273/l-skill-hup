@@ -4,14 +4,19 @@ import java.util.List;
 import java.util.Optional;
 
 import com.landray.skillhub.domain.model.Skill;
+import com.landray.skillhub.domain.model.SkillName;
 import com.landray.skillhub.domain.model.SkillSearchCriteria;
+import com.landray.skillhub.domain.model.SkillSource;
+import com.landray.skillhub.domain.model.SkillStatus;
 import com.landray.skillhub.domain.model.SkillVersion;
 import com.landray.skillhub.shared.model.PageResult;
 
 /**
  * skill 的仓储接口。只有接口,纯 Java,实现在 {@code infrastructure.persistence}。
  *
- * <p>本轮只落地读侧四个方法,写侧(新增、发版、下架等)由后续任务补齐——按需扩展接口,不预先占位。
+ * <p>写侧方法(上传管线任务补齐)刻意保持"每个方法只做一件单表操作"的粒度,而不是把"新建 skill + 首个版本"
+ * 揉成一个大方法——多表写入的编排(顺序、事务边界、唯一约束冲突后的重试)属于 application 层职责
+ * (backend/CLAUDE.md 第一节),仓储只负责把每一步翻译成 SQL。
  */
 public interface SkillRepository {
 
@@ -21,9 +26,71 @@ public interface SkillRepository {
     /** 详情查询,含最新版本全部字段(正文、认证信息)与全部标签。{@code UNLISTED} 的 skill 同样可查——只是不进列表。 */
     Optional<Skill> findDetailById(long skillId);
 
+    /** 按 name 查详情,用于 precheck 的重名检测与 {@code existing} 字段拼装(业务建模文档 6.2)。 */
+    Optional<Skill> findByName(String name);
+
     /** skill 是否存在,用于版本列表接口在返回空数组前先判断"skill 压根不存在"应返回 404。 */
     boolean existsById(long skillId);
 
     /** 某个 skill 的全部版本,按发布时间倒序,含各版本认证状态。不含正文(见 {@link SkillVersion} 类注释)。 */
     List<SkillVersion> findVersionsBySkillId(long skillId);
+
+    /**
+     * 按 {@code content_digest} 查是否已有内容完全相同的版本(precheck 的"完全相同的包已存在"判定,业务建模
+     * 文档 5.5)。只需要 {@code skillId} / {@code version} 两个字段,其余字段不保证被填充。
+     */
+    Optional<SkillVersion> findVersionByContentDigest(String contentDigest);
+
+    /** 某个 skill 当前最大(即 {@code latest_version_id} 指向的)版本号,尚无版本时返回空(业务建模文档 5.4)。 */
+    Optional<String> findLatestVersionString(long skillId);
+
+    /**
+     * 插入新 skill 行(不含版本,{@code latest_version_id} 留空)。
+     *
+     * @return 生成的 skill id
+     * @throws com.landray.skillhub.shared.exception.ResourceConflictException {@code uk_skill_name} 冲突时,
+     *     code 为 {@code SKILL_NAME_DUPLICATED}——不做先查后插,唯一索引是仲裁者(业务建模文档 5.14)
+     */
+    long insertSkill(
+            SkillName name, String displayName, String description, SkillSource source, long ownerUserId,
+            String cardExcerpt);
+
+    /**
+     * 插入新 skill_version 行。{@code certification} 恒为 {@code NONE}(业务建模文档 5.8:新版本不继承认证),
+     * 由调用方在传入的 {@link SkillVersion} 里保证。
+     *
+     * @return 生成的 version id
+     * @throws com.landray.skillhub.shared.exception.ResourceConflictException {@code uk_skill_version} 冲突时,
+     *     code 为 {@code SKILL_VERSION_DUPLICATED}
+     */
+    long insertVersion(SkillVersion draft);
+
+    /**
+     * 带 SemVer 数值序递增条件的 {@code latest_version_id} 更新(业务建模文档 5.4 第 5 条 / 5.14)。比较用
+     * PostgreSQL 的数组序({@code string_to_array(version,'.')::int[]}),不是字符串序,否则 {@code "10.0.0"}
+     * 会被判定小于 {@code "9.0.0"}。
+     *
+     * @return 是否真的发生了更新——并发发版时后写者传入较小版本号会返回 {@code false},调用方据此判断是否需要
+     *     用自己的版本号重新计算 {@code card_excerpt} 等冗余字段
+     */
+    boolean updateLatestVersionIfGreater(
+            long skillId, long versionId, String version, String description, String cardExcerpt);
+
+    /**
+     * 整体替换 skill 的标签集合:删旧插新。数量约束(CURATED 1~3、FREE 至多 10)由调用方在调用前校验——仓储层
+     * 只负责翻译成 SQL,不做业务规则判断。
+     *
+     * <p><b>不在这里做孤儿 FREE 标签清理</b>——那需要判断"这个标签是否失去了全部引用",跨到了 tag 这张表,
+     * 由 application 层拿到本方法返回的旧标签集合后,对每个不在新集合里的旧标签调用
+     * {@code TagRepository.deleteFreeTagIfOrphaned}(业务建模文档 5.7)。
+     *
+     * @return 替换前该 skill 关联的标签 id 集合
+     */
+    List<Long> replaceTags(long skillId, List<Long> tagIds);
+
+    /** 改 displayName / source,不改 name(业务建模文档 5.16:name 一经创建不可修改)。 */
+    void updateMetadata(long skillId, String displayName, SkillSource source);
+
+    /** 下架 / 恢复,只改 status,不动版本、评论、表态、收藏(业务建模文档 5.15)。 */
+    void updateStatus(long skillId, SkillStatus status);
 }

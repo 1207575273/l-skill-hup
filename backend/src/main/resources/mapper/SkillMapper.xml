@@ -196,4 +196,118 @@
         ORDER BY created_at DESC, id DESC
     </select>
 
+    <!--
+      precheck 的重名检测(业务建模文档 6.2 的 existing 字段)复用 selectDetailById 同一份 resultMap——
+      两条查询字段完全一致,只是 WHERE 条件从 id 换成 name,没必要为此单独定义一遍 resultMap。
+    -->
+    <select id="selectDetailByName" resultMap="skillDetailRowResultMap">
+        SELECT
+            s.id, s.name, s.display_name, s.description, s.source, s.card_excerpt, s.status,
+            s.download_count, s.like_count, s.dislike_count, s.favorite_count, s.comment_count,
+            s.created_at, s.updated_at,
+            s.owner_user_id                    AS owner_user_id,
+            ou.display_name                    AS owner_display_name,
+            ou.employee_no                      AS owner_employee_no,
+            sv.id                               AS latest_version_id,
+            sv.version                          AS latest_version_version,
+            sv.size_bytes                       AS latest_version_size_bytes,
+            sv.file_count                       AS latest_version_file_count,
+            sv.allowed_tools                    AS latest_version_allowed_tools,
+            sv.skill_md_content                 AS latest_version_skill_md_content,
+            sv.readme_content                   AS latest_version_readme_content,
+            sv.changelog                        AS latest_version_changelog,
+            sv.certification                    AS latest_version_certification,
+            sv.certified_by_user_id             AS latest_version_certified_by_user_id,
+            sv.certified_at                     AS latest_version_certified_at,
+            sv.certify_note                     AS latest_version_certify_note,
+            sv.created_by_user_id               AS latest_version_created_by_user_id,
+            sv.created_at                       AS latest_version_created_at
+        FROM skill s
+        LEFT JOIN app_user ou ON ou.id = s.owner_user_id
+        LEFT JOIN skill_version sv ON sv.id = s.latest_version_id
+        WHERE s.name = #{name}
+    </select>
+
+    <!-- idx_skill_version_digest 服务的正是这条查询:precheck 判定"完全相同的包已存在"(业务建模文档 5.5)。 -->
+    <select id="selectVersionByContentDigest"
+            resultType="com.landray.skillhub.infrastructure.persistence.po.SkillDigestMatchRow">
+        SELECT id, skill_id, version
+        FROM skill_version
+        WHERE content_digest = #{contentDigest}
+        ORDER BY id
+        LIMIT 1
+    </select>
+
+    <select id="selectLatestVersionString" resultType="string">
+        SELECT sv.version
+        FROM skill s
+        JOIN skill_version sv ON sv.id = s.latest_version_id
+        WHERE s.id = #{skillId}
+    </select>
+
+    <!--
+      insert 用 Map 而不是直接传领域对象——与 AppUserMapper.xml 顶部注释同一个理由:useGeneratedKeys 需要把生成的
+      id 写回参数对象,SkillName/SkillVersion 都是不可变 record,没有 setter 写不回去。
+    -->
+    <insert id="insertSkill" useGeneratedKeys="true" keyProperty="id" keyColumn="id" parameterType="map">
+        INSERT INTO skill (name, display_name, description, source, owner_user_id, card_excerpt)
+        VALUES (#{name}, #{displayName}, #{description}, #{source}, #{ownerUserId}, #{cardExcerpt})
+    </insert>
+
+    <insert id="insertVersion" useGeneratedKeys="true" keyProperty="id" keyColumn="id" parameterType="map">
+        INSERT INTO skill_version
+            (skill_id, version, artifact_key, content_digest, sha256, size_bytes, file_count,
+             allowed_tools, skill_md_content, readme_content, certification, created_by_user_id)
+        VALUES
+            (#{skillId}, #{version}, #{artifactKey}, #{contentDigest}, #{sha256}, #{sizeBytes}, #{fileCount},
+             #{allowedTools, typeHandler=com.landray.skillhub.infrastructure.persistence.typehandler.StringArrayTypeHandler},
+             #{skillMdContent}, #{readmeContent}, #{certification}, #{createdByUserId})
+    </insert>
+
+    <!--
+      带 SemVer 数值序递增条件的 latest_version_id 更新(业务建模文档 5.4 第 5 条 / 5.14)。
+      string_to_array(version, '.')::int[] 把 "1.10.0" 变成 PostgreSQL 的 int[] {1,10,0},数组比较是逐元素的
+      数值序而不是字符串序——这是不额外建扩展、不加应用层比较也能在 SQL 层正确判断"新版本确实更大"的关键,
+      直接决定了并发发版时后写者会不会把旧版本错误地钉成 latest。
+    -->
+    <update id="updateLatestVersionIfGreater">
+        UPDATE skill s
+        SET latest_version_id = #{versionId},
+            description = #{description},
+            card_excerpt = #{cardExcerpt}
+        WHERE s.id = #{skillId}
+          AND (
+            s.latest_version_id IS NULL
+            OR NOT EXISTS (
+                SELECT 1 FROM skill_version cur
+                WHERE cur.id = s.latest_version_id
+                  AND string_to_array(cur.version, '.')::int[] >= string_to_array(#{version}, '.')::int[]
+            )
+          )
+    </update>
+
+    <select id="selectTagIdsBySkillId" resultType="long">
+        SELECT tag_id FROM skill_tag WHERE skill_id = #{skillId}
+    </select>
+
+    <delete id="deleteSkillTags">
+        DELETE FROM skill_tag WHERE skill_id = #{skillId}
+    </delete>
+
+    <insert id="insertSkillTags">
+        INSERT INTO skill_tag (skill_id, tag_id)
+        VALUES
+        <foreach item="tagId" collection="tagIds" separator=",">
+            (#{skillId}, #{tagId})
+        </foreach>
+    </insert>
+
+    <update id="updateMetadata">
+        UPDATE skill SET display_name = #{displayName}, source = #{source} WHERE id = #{skillId}
+    </update>
+
+    <update id="updateStatus">
+        UPDATE skill SET status = #{status} WHERE id = #{skillId}
+    </update>
+
 </mapper>

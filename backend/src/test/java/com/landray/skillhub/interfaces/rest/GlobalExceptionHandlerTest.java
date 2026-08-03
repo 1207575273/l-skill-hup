@@ -114,6 +114,15 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("multipart 上传超过大小上限时,映射为 413 而不是落进兜底的 500")
+    void should_returnPayloadTooLarge_when_maxUploadSizeExceeded() throws Exception {
+        mockMvc.perform(get("/test-support/upload-too-large"))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.code").value("UPLOAD_TOO_LARGE"))
+                .andExpect(jsonPath("$.traceId", not(blankOrNullString())));
+    }
+
+    @Test
     @DisplayName("MDC 中没有 traceId 时,直接调用 handler 也不能静默返回 null 或空串,而是生成兜底值")
     void should_generateFallbackTraceId_when_mdcHasNoTraceId() {
         MDC.clear();

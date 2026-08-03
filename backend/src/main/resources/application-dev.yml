@@ -69,6 +69,17 @@ skillhub:
     type: local
     local-root: ${ARTIFACT_ROOT:./data/artifacts}
 
+  # 上传管线的解包上限(业务建模文档 5.2)。**必须在解压过程中实时生效**,不能解压完再查——
+  # 一个 32MB 的包(multipart 上限见 spring.servlet.multipart,与这里无关)可以解压出几十 GB。
+  # 与 multipart.max-file-size 是两件事:那个卡的是"上传的 zip 本身多大",这里卡的是"解压后能有多大"。
+  upload:
+    max-unpacked-bytes: 67108864 # 64MB,skill zip 实际几十 KB 到几 MB,两个数量级余量
+    max-entry-count: 500 # 一个 skill 带满 references/scripts/assets 也到不了三位数
+    max-file-bytes: 16777216 # 16MB,超过这个体积的东西不该放进 skill 包
+    max-path-depth: 8 # <name>/references/a/b/c/ 已经很深(剥顶层包裹目录之后计算)
+    max-path-length: 255 # 与 artifact_key 列宽一致,也避开各平台路径上限
+    max-compression-ratio: 100 # 正常文本压缩比在 3~10:1,超过 100:1 判定为 zip 炸弹
+
   auth:
     # P0 默认关闭自助注册:内网谁都能访问页面,开着意味着任何人都能注册后上传恶意 skill
     # (业务建模文档 3.2)。dev 同样默认关闭,要联调注册流程时手动打开。
@@ -77,6 +88,16 @@ skillhub:
       login: ${BOOTSTRAP_ADMIN_LOGIN:admin}
       # dev 给一个开箱即用的默认密码,方便本机启动;prod 绝不允许有默认值(见 application-prod.yml)。
       password: ${BOOTSTRAP_ADMIN_PASSWORD:admin123456}
+
+  install:
+    # 渲染安装脚本时拼接下载 URL 的基地址(含 context-path)。脚本下载后在用户本机离线执行,
+    # 不能从 server.port/context-path 反推出这台服务器对外可达的地址,必须显式配置;
+    # dev 给一个开箱即用的默认值,与本文件上方 server.port: 18080 + context-path: /skillhub 对齐。
+    public-base-url: ${INSTALL_PUBLIC_BASE_URL:http://localhost:18080/skillhub}
+    # 安装单有效期(天),防止旧命令在群里流传半年后还在装过期版本(根 CLAUDE.md 第七节)。
+    # 业务建模文档 4.13 只要求"必须有有效期"未给具体数值,30 天是本轮实现按团队内分享通常几周内
+    # 消化完选定的默认值,详见 InstallProperties 类注释。
+    bundle-ttl-days: ${INSTALL_BUNDLE_TTL_DAYS:30}
 
 # 日志:控制台人类可读,文件 JSONL(ECS)。形态与 prod 一致,量级按 dev 放宽。
 logging:

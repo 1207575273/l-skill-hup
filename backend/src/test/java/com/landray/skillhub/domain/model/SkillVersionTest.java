@@ -11,8 +11,8 @@ class SkillVersionTest {
 
     private SkillVersion versionWith(Certification certification) {
         return new SkillVersion(
-                1L, 10L, "1.0.0", 1024L, 3, List.of("Read", "Grep"), "# skill", null, null, certification, null, null,
-                null, 1L, null);
+                1L, 10L, "1.0.0", "artifacts/10/1.0.0.zip", "0".repeat(64), "0".repeat(64), 1024L, 3,
+                List.of("Read", "Grep"), "# skill", null, null, certification, null, null, null, 1L, null);
     }
 
     @Test
