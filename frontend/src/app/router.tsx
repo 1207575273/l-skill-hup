@@ -1,6 +1,7 @@
 import { Outlet, Route, Routes } from 'react-router'
 import InstallPage from '../pages/InstallPage'
 import LoginPage from '../pages/LoginPage'
+import RegisterPage from '../pages/RegisterPage'
 import SkillDetailPage from '../pages/SkillDetailPage'
 import SkillListPage from '../pages/SkillListPage'
 import UploadPage from '../pages/UploadPage'
@@ -35,6 +36,10 @@ export default function AppRouter() {
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/install" element={<InstallPage />} />
         <Route path="/login" element={<LoginPage />} />
+        {/* 注册页自己按 /auth/providers 的 localRegisterEnabled 决定放不放行 ——
+            路由恒定存在,开关归服务端。之前登录页有指向 /register 的链接、但这条路由不存在,
+            点了直接白屏。 */}
+        <Route path="/register" element={<RegisterPage />} />
       </Route>
     </Routes>
   )

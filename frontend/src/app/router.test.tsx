@@ -90,6 +90,16 @@ describe('AppRouter', () => {
     expect(screen.getByText('正在加载 skill 详情')).toBeInTheDocument()
   })
 
+  it('should_render_register_page_when_path_is_/register', async () => {
+    // 这条盯的是一个真实漏掉的接缝:登录页早就有指向 /register 的链接,
+    // 但那条路由和页面根本不存在 —— 点了直接白屏,而登录页自己的测试看不出来。
+    renderAt('/register')
+
+    // providers mock 里 localRegisterEnabled 为 false,所以渲染的是"未开放"说明而不是表单。
+    // 这条要验的是"路由挂上了",不是注册表单本身(那由 RegisterPage.test.tsx 覆盖)。
+    expect(await screen.findByText('注册未开放')).toBeInTheDocument()
+  })
+
   it('should_render_install_page_when_path_is_/install', () => {
     // 购物车默认是空的(Zustand store 未被其它测试污染),空态是 install 路由本身的行为。
     renderAt('/install')
