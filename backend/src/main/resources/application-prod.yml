@@ -46,6 +46,24 @@ management:
       # 不对外泄漏依赖组件的细节(DB 地址、磁盘路径等)
       show-details: never
 
+# OpenAPI(springdoc)。**prod 默认全关**,与上面 actuator "多开一个端点就是多一份攻击面"同一判断。
+#
+# 为什么关得起:8.3 那条"后端导出 openapi.json -> 前端生成 TS 类型"是**开发期**动作,dev 有就够了,
+# prod 开着不产生任何额外价值。而 swagger-ui 是个"try it out"控制台 —— 管理员带着有效会话打开它,
+# 一次误点就是一次真实的写操作,这个平台的写操作是往别人机器上分发会被 Agent 执行的内容。
+#
+# 留开关而不是写死 false:真有人要在内网 prod 上排查接口时能临时打开,但那必须是一次
+# **有意识的决定**(改环境变量重启),不是默认就敞着。
+springdoc:
+  api-docs:
+    enabled: ${OPENAPI_ENABLED:false}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${OPENAPI_ENABLED:false}
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+
 skillhub:
   storage:
     type: local

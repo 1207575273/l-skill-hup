@@ -46,6 +46,21 @@ management:
       # dev 要看得见 DB / 磁盘的具体状态,排障方便
       show-details: always
 
+# OpenAPI(springdoc)。dev 全开:接口文档与 swagger-ui 都是开发期工具。
+# 完整地址带 context-path:http://localhost:18080/skillhub/v3/api-docs
+#                          http://localhost:18080/skillhub/swagger-ui.html
+# 前端 TS 类型由这里导出的 openapi.json 生成(业务建模文档 8.3)。
+springdoc:
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    # 不排序的话接口顺序跟着扫描顺序漂,每次加一个 Controller 整页都在动,没法 diff
+    tags-sorter: alpha
+    operations-sorter: alpha
+
 skillhub:
   storage:
     # P0 用本地文件夹实现 ArtifactStorage,业务代码只认接口
