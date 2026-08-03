@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  tag 只读查询。单一事实源:docs/20260802224934_业务建模与接口契约.md 6.2("GET /tags 词条列表,kind 可筛,
+  附带各词条下的 skill 数(GROUP BY 实时算)")。
+
+  skill_count 的 count(s.id) 而不是 count(st.skill_id):两次 LEFT JOIN 串联时,
+  st(skill_tag)与 s(skill,且限定 status='PUBLISHED')是分开的两次 LEFT JOIN——
+  一个 tag 关联着已下架(UNLISTED)的 skill 时,skill_tag 那一跳仍然匹配(st.skill_id 非空),
+  只有第二跳"且 status=PUBLISHED"的条件不满足,此时 s.* 全部为 NULL 但 st.skill_id 依然非空。
+  数的是 count(s.id) 才能正确地只统计"当前在列表里可见"的 skill 数,否则计数会包含用户点进去却发现列表里
+  根本找不到的下架 skill,是自相矛盾的展示。
+-->
+<mapper namespace="com.landray.skillhub.infrastructure.persistence.mapper.TagMapper">
+
+    <select id="selectAll" resultType="com.landray.skillhub.infrastructure.persistence.po.TagRow">
+        SELECT
+            t.id                    AS id,
+            t.name                  AS name,
+            t.kind                  AS kind,
+            t.description           AS description,
+            t.sort_order            AS sort_order,
+            t.created_by_user_id    AS created_by_user_id,
+            t.created_at            AS created_at,
+            t.updated_at            AS updated_at,
+            count(s.id)             AS skill_count
+        FROM tag t
+        LEFT JOIN skill_tag st ON st.tag_id = t.id
+        LEFT JOIN skill s ON s.id = st.skill_id AND s.status = 'PUBLISHED'
+        <where>
+            <if test="kind != null">
+                AND t.kind = #{kind}
+            </if>
+        </where>
+        GROUP BY t.id
+        ORDER BY t.kind, t.sort_order, t.name
+    </select>
+
+</mapper>

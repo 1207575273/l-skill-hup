@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  skill 只读查询。单一事实源:docs/20260802224934_业务建模与接口契约.md 6.2(skill 接口清单)与 6.3(持久化实现要点)。
+
+  两条贯穿全文件的取舍,读其余部分前先知道:
+
+  1. 【分页与标签 AND 筛选】selectListPage / countList 共用 <sql id="skillListFilter">,保证"分页的 count 语句
+     必须与主查询同构"(文档 6.3)。tagIds 多值 AND 用子查询 + GROUP BY/HAVING 表达
+     (WHERE s.id IN (SELECT skill_id FROM skill_tag WHERE tag_id IN (...) GROUP BY skill_id HAVING count(*) = n)),
+     而不是把 skill_tag 直接 JOIN 进主查询——直接 JOIN 会让一个 skill 因为命中多个 tag 而展开成多行,
+     LIMIT/OFFSET 分页出来的就不再是"N 个 skill"而是"N 行(skill, tag)组合",分页语义整个错掉。
+  2. 【tags 不在这两条查询里】无论是列表还是详情,skill 的标签列表都由 SkillRepositoryImpl 另发一次
+     selectTagsBySkillIds 批量取,在 Java 里按 skillId 分组后挂回去——同样是为了不让主查询因为 JOIN tag 展开成
+     多行。
+-->
+<mapper namespace="com.landray.skillhub.infrastructure.persistence.mapper.SkillMapper">
+
+    <!--
+      两条查询共享的过滤条件,任何新增筛选条件都改这一处,天然保证同构。
+      certifiedOnly 依赖 sv(skill_version)已被 JOIN 进来,两条查询都会 LEFT JOIN skill_version——
+      countList 不需要 app_user(它只影响 SELECT 列表,不影响筛选/行数),所以省掉那个 JOIN。
+    -->
+    <sql id="skillListFilter">
+        <where>
+            s.status = 'PUBLISHED'
+            <if test="source != null">
+                AND s.source = #{source}
+            </if>
+            <if test="certifiedOnly">
+                AND sv.certification = 'CERTIFIED'
+            </if>
+            <if test="ownerUserId != null">
+                AND s.owner_user_id = #{ownerUserId}
+            </if>
+            <if test="keywordPattern != null">
+                AND (
+                    s.name ILIKE #{keywordPattern} ESCAPE '\'
+                    OR s.display_name ILIKE #{keywordPattern} ESCAPE '\'
+                    OR s.description ILIKE #{keywordPattern} ESCAPE '\'
+                    OR s.card_excerpt ILIKE #{keywordPattern} ESCAPE '\'
+                )
+            </if>
+            <if test="tagIds != null and !tagIds.isEmpty()">
+                AND s.id IN (
+                    SELECT st.skill_id
+                    FROM skill_tag st
+                    WHERE st.tag_id IN
+                    <foreach item="tagId" collection="tagIds" open="(" separator="," close=")">
+                        #{tagId}
+                    </foreach>
+                    GROUP BY st.skill_id
+                    HAVING count(*) = #{tagCount}
+                )
+            </if>
+        </where>
+    </sql>
+
+    <select id="selectListPage" resultType="com.landray.skillhub.infrastructure.persistence.po.SkillListRow">
+        SELECT
+            s.id                    AS id,
+            s.name                  AS name,
+            s.display_name          AS display_name,
+            s.card_excerpt          AS card_excerpt,
+            s.download_count        AS download_count,
+            s.like_count            AS like_count,
+            s.favorite_count        AS favorite_count,
+            s.updated_at            AS updated_at,
+            s.owner_user_id         AS owner_user_id,
+            ou.display_name         AS owner_display_name,
+            ou.employee_no          AS owner_employee_no,
+            sv.id                   AS latest_version_id,
+            sv.version              AS latest_version_version,
+            sv.certification        AS latest_version_certification
+        FROM skill s
+        LEFT JOIN app_user ou ON ou.id = s.owner_user_id
+        LEFT JOIN skill_version sv ON sv.id = s.latest_version_id
+        <include refid="skillListFilter"/>
+        <!--
+          sortColumn 用 ${} 而不是 #{}:排序列是一个 SQL 标识符,不能用绑定变量参数化;
+          调用方(SkillRepositoryImpl#resolveSortColumn)只传由 SkillSortOption 枚举映射出的固定白名单常量,
+          从不透传用户输入的原始字符串,不构成 SQL 注入面。见 SkillMapper 接口注释。
+        -->
+        ORDER BY ${sortColumn} DESC, s.id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countList" resultType="long">
+        SELECT count(*)
+        FROM skill s
+        LEFT JOIN skill_version sv ON sv.id = s.latest_version_id
+        <include refid="skillListFilter"/>
+    </select>
+
+    <select id="selectTagsBySkillIds" resultType="com.landray.skillhub.infrastructure.persistence.po.SkillTagRow">
+        SELECT
+            st.skill_id             AS skill_id,
+            t.id                    AS tag_id,
+            t.name                  AS tag_name,
+            t.kind                  AS tag_kind,
+            t.description           AS tag_description,
+            t.sort_order            AS tag_sort_order,
+            t.created_by_user_id    AS tag_created_by_user_id,
+            t.created_at            AS tag_created_at,
+            t.updated_at            AS tag_updated_at
+        FROM skill_tag st
+        JOIN tag t ON t.id = st.tag_id
+        WHERE st.skill_id IN
+        <foreach item="skillId" collection="skillIds" open="(" separator="," close=")">
+            #{skillId}
+        </foreach>
+        ORDER BY st.skill_id, t.kind, t.sort_order, t.name
+    </select>
+
+    <!--
+      详情查询显式声明 resultMap(而不是像其余查询一样用 resultType 自动映射):allowed_tools 列是
+      PostgreSQL TEXT[],需要 StringArrayTypeHandler 手动转换(业务建模文档 6.3),自动映射无法为单个列指定
+      typeHandler,所以这里必须用完整的 <constructor> 显式声明每一个构造参数。
+    -->
+    <resultMap id="skillDetailRowResultMap"
+               type="com.landray.skillhub.infrastructure.persistence.po.SkillDetailRow">
+        <constructor>
+            <idArg column="id" javaType="java.lang.Long"/>
+            <arg column="name" javaType="java.lang.String"/>
+            <arg column="display_name" javaType="java.lang.String"/>
+            <arg column="description" javaType="java.lang.String"/>
+            <arg column="source" javaType="com.landray.skillhub.domain.model.SkillSource"/>
+            <arg column="owner_user_id" javaType="java.lang.Long"/>
+            <arg column="owner_display_name" javaType="java.lang.String"/>
+            <arg column="owner_employee_no" javaType="java.lang.String"/>
+            <arg column="card_excerpt" javaType="java.lang.String"/>
+            <arg column="status" javaType="com.landray.skillhub.domain.model.SkillStatus"/>
+            <arg column="download_count" javaType="_long"/>
+            <arg column="like_count" javaType="_int"/>
+            <arg column="dislike_count" javaType="_int"/>
+            <arg column="favorite_count" javaType="_int"/>
+            <arg column="comment_count" javaType="_int"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="updated_at" javaType="java.time.Instant"/>
+            <arg column="latest_version_id" javaType="java.lang.Long"/>
+            <arg column="latest_version_version" javaType="java.lang.String"/>
+            <arg column="latest_version_size_bytes" javaType="java.lang.Long"/>
+            <arg column="latest_version_file_count" javaType="java.lang.Integer"/>
+            <arg column="latest_version_allowed_tools" javaType="java.util.List"
+                 typeHandler="com.landray.skillhub.infrastructure.persistence.typehandler.StringArrayTypeHandler"/>
+            <arg column="latest_version_skill_md_content" javaType="java.lang.String"/>
+            <arg column="latest_version_readme_content" javaType="java.lang.String"/>
+            <arg column="latest_version_changelog" javaType="java.lang.String"/>
+            <arg column="latest_version_certification" javaType="com.landray.skillhub.domain.model.Certification"/>
+            <arg column="latest_version_certified_by_user_id" javaType="java.lang.Long"/>
+            <arg column="latest_version_certified_at" javaType="java.time.Instant"/>
+            <arg column="latest_version_certify_note" javaType="java.lang.String"/>
+            <arg column="latest_version_created_by_user_id" javaType="java.lang.Long"/>
+            <arg column="latest_version_created_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <select id="selectDetailById" resultMap="skillDetailRowResultMap">
+        SELECT
+            s.id, s.name, s.display_name, s.description, s.source, s.card_excerpt, s.status,
+            s.download_count, s.like_count, s.dislike_count, s.favorite_count, s.comment_count,
+            s.created_at, s.updated_at,
+            s.owner_user_id                    AS owner_user_id,
+            ou.display_name                    AS owner_display_name,
+            ou.employee_no                      AS owner_employee_no,
+            sv.id                               AS latest_version_id,
+            sv.version                          AS latest_version_version,
+            sv.size_bytes                       AS latest_version_size_bytes,
+            sv.file_count                       AS latest_version_file_count,
+            sv.allowed_tools                    AS latest_version_allowed_tools,
+            sv.skill_md_content                 AS latest_version_skill_md_content,
+            sv.readme_content                   AS latest_version_readme_content,
+            sv.changelog                        AS latest_version_changelog,
+            sv.certification                    AS latest_version_certification,
+            sv.certified_by_user_id             AS latest_version_certified_by_user_id,
+            sv.certified_at                     AS latest_version_certified_at,
+            sv.certify_note                     AS latest_version_certify_note,
+            sv.created_by_user_id               AS latest_version_created_by_user_id,
+            sv.created_at                       AS latest_version_created_at
+        FROM skill s
+        LEFT JOIN app_user ou ON ou.id = s.owner_user_id
+        LEFT JOIN skill_version sv ON sv.id = s.latest_version_id
+        WHERE s.id = #{skillId}
+    </select>
+
+    <select id="countById" resultType="int">
+        SELECT count(*) FROM skill WHERE id = #{skillId}
+    </select>
+
+    <select id="selectVersionsBySkillId" resultType="com.landray.skillhub.infrastructure.persistence.po.SkillVersionRow">
+        SELECT
+            id, version, size_bytes, file_count, certification,
+            certified_by_user_id, certified_at, certify_note, created_by_user_id, created_at
+        FROM skill_version
+        WHERE skill_id = #{skillId}
+        ORDER BY created_at DESC, id DESC
+    </select>
+
+</mapper>
