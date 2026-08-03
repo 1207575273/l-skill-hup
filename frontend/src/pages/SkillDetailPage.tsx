@@ -9,6 +9,7 @@ import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Modal } from '../components/Modal'
 import { QuickInstallMenu } from '../components/QuickInstallMenu'
+import { SkillCommentSection } from '../components/SkillCommentSection'
 import { SkillContentViewer } from '../components/SkillContentViewer'
 import { SkillFilePreview } from '../components/SkillFilePreview'
 import { SkillFileTree } from '../components/SkillFileTree'
@@ -248,6 +249,8 @@ export default function SkillDetailPage() {
           </div>
         </section>
       )}
+
+      <SkillCommentSection skillId={skill.id} currentUser={currentUser} />
 
       <section aria-labelledby="skill-versions-heading" className="flex flex-col gap-3">
         <h2

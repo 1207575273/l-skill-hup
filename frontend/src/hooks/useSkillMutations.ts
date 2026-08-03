@@ -1,8 +1,14 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { skillKeys, tagKeys } from '../api/queryKeys'
-import type { PublishSkillPayload, PublishSkillVersionPayload } from '../api/skills'
+import type {
+  AddCommentPayload,
+  PublishSkillPayload,
+  PublishSkillVersionPayload,
+} from '../api/skills'
 import {
+  addSkillComment,
   deleteSkill,
+  deleteSkillComment,
   precheckSkillPackage,
   publishSkill,
   publishSkillVersion,
@@ -114,6 +120,40 @@ export function useDeleteSkill(skillId: number) {
       queryClient.removeQueries({ queryKey: skillKeys.detail(skillId) })
       queryClient.invalidateQueries({ queryKey: skillKeys.managedAll() })
       queryClient.invalidateQueries({ queryKey: skillKeys.lists() })
+    },
+  })
+}
+
+/**
+ * `POST /skills/{id}/comments`。
+ *
+ * **同时失效评论列表与 skill 详情**:详情响应里带着 `commentCount`,只刷评论列表的话,
+ * 新评论出现了而上面的计数还是旧的 —— 那种不一致会让人怀疑到底发出去没有。
+ */
+export function useAddSkillComment(skillId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: AddCommentPayload) => addSkillComment(skillId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: skillKeys.commentsAll(skillId) })
+      queryClient.invalidateQueries({ queryKey: skillKeys.detail(skillId) })
+    },
+  })
+}
+
+/**
+ * `POST /comments/{id}/delete`,软删除。
+ *
+ * 失效范围与发表完全一致 —— 计数同样要跟着变。删除按钮在评论条目上,而 skillId 不在那条评论的
+ * 响应体里,所以由调用方从页面上下文传进来。
+ */
+export function useDeleteSkillComment(skillId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (commentId: number) => deleteSkillComment(commentId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: skillKeys.commentsAll(skillId) })
+      queryClient.invalidateQueries({ queryKey: skillKeys.detail(skillId) })
     },
   })
 }

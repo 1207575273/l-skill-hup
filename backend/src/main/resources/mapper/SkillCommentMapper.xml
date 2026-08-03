@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  评论读写。单一事实源:docs/20260802224934_业务建模与接口契约.md 5.11。
+
+  两条贯穿全文件的取舍,读其余部分前先知道:
+
+  1. 【已删除的正文由 SQL 直接置空】所有 SELECT 都写成
+     CASE WHEN c.status = 'DELETED' THEN NULL ELSE c.content END。
+     不是"取出来之后再抹掉"——让已删除的正文根本不进入这个进程,比"取出来后记得别用"可靠得多:
+     后者依赖每一个调用方都记得判 status,而漏判不会报错,只会把删掉的内容重新展示出来。
+
+  2. 【分页口径是顶级评论,不是评论行】selectTopLevelPage 与 countTopLevel 共用同一套 WHERE,
+     保证"count 语句必须与主查询同构"。回复由 selectRepliesByParentIds 单独批量取,在 Java 里挂回去——
+     直接 JOIN 会让一条顶级评论因为有多条回复展开成多行,LIMIT/OFFSET 分出来的就不再是"N 条顶级评论"。
+     这与 SkillMapper.xml 里 tags 不进主查询是同一个理由。
+-->
+<mapper namespace="com.landray.skillhub.infrastructure.persistence.mapper.SkillCommentMapper">
+
+    <resultMap id="skillCommentRowResultMap" type="com.landray.skillhub.infrastructure.persistence.po.SkillCommentRow">
+        <constructor>
+            <idArg column="id" javaType="java.lang.Long"/>
+            <arg column="skill_id" javaType="java.lang.Long"/>
+            <arg column="parent_id" javaType="java.lang.Long"/>
+            <arg column="author_user_id" javaType="java.lang.Long"/>
+            <arg column="author_display_name" javaType="java.lang.String"/>
+            <arg column="author_employee_no" javaType="java.lang.String"/>
+            <arg column="content" javaType="java.lang.String"/>
+            <arg column="status" javaType="com.landray.skillhub.domain.model.CommentStatus"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="commentColumns">
+        c.id                AS id,
+        c.skill_id          AS skill_id,
+        c.parent_id         AS parent_id,
+        c.user_id           AS author_user_id,
+        au.display_name     AS author_display_name,
+        au.employee_no      AS author_employee_no,
+        <!-- 见文件头第 1 条:已删除的正文不出库 -->
+        CASE WHEN c.status = 'DELETED' THEN NULL ELSE c.content END AS content,
+        c.status            AS status,
+        c.created_at        AS created_at
+    </sql>
+
+    <!--
+      顶级评论的可见性判据,主查询与 count 共用,保证同构。
+
+      已删除的顶级评论**只在还有未删除的回复时**保留:软删除存在的唯一理由就是不让回复悬空,
+      没有回复可悬空时,一条"该评论已删除"的占位就是纯噪音,而这类噪音会随时间单调累积。
+    -->
+    <sql id="visibleTopLevelFilter">
+        c.skill_id = #{skillId}
+        AND c.parent_id IS NULL
+        AND (
+            c.status = 'NORMAL'
+            OR EXISTS (
+                SELECT 1 FROM skill_comment r
+                WHERE r.parent_id = c.id AND r.status = 'NORMAL'
+            )
+        )
+    </sql>
+
+    <select id="selectTopLevelPage" resultMap="skillCommentRowResultMap">
+        SELECT
+        <include refid="commentColumns"/>
+        FROM skill_comment c
+        LEFT JOIN app_user au ON au.id = c.user_id
+        WHERE
+        <include refid="visibleTopLevelFilter"/>
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countTopLevel" resultType="long">
+        SELECT count(*)
+        FROM skill_comment c
+        WHERE
+        <include refid="visibleTopLevelFilter"/>
+    </select>
+
+    <!--
+      回复正序:对话要顺着读。与顶级评论的倒序刻意不同——顶级是"最新的先看到",
+      回复是"从头看这段对话",两者的阅读方式本来就相反。
+
+      已删除的回复直接不返回:它下面不可能再挂东西(只允许一层),留着占位没有任何人受益。
+    -->
+    <select id="selectRepliesByParentIds" resultMap="skillCommentRowResultMap">
+        SELECT
+        <include refid="commentColumns"/>
+        FROM skill_comment c
+        LEFT JOIN app_user au ON au.id = c.user_id
+        WHERE c.status = 'NORMAL'
+          AND c.parent_id IN
+        <foreach item="parentId" collection="parentIds" open="(" separator="," close=")">
+            #{parentId}
+        </foreach>
+        ORDER BY c.created_at ASC, c.id ASC
+    </select>
+
+    <!-- 已删除的也返回:调用方要能区分"不存在"与"已经删过了" -->
+    <select id="selectById" resultMap="skillCommentRowResultMap">
+        SELECT
+        <include refid="commentColumns"/>
+        FROM skill_comment c
+        LEFT JOIN app_user au ON au.id = c.user_id
+        WHERE c.id = #{commentId}
+    </select>
+
+    <select id="countTopLevelByIdAndSkillId" resultType="int">
+        SELECT count(*)
+        FROM skill_comment
+        WHERE id = #{commentId}
+          AND skill_id = #{skillId}
+          AND parent_id IS NULL
+          AND status = 'NORMAL'
+    </select>
+
+    <insert id="insertComment" useGeneratedKeys="true" keyProperty="id" keyColumn="id" parameterType="map">
+        INSERT INTO skill_comment (skill_id, user_id, parent_id, content)
+        VALUES (#{skillId}, #{userId}, #{parentId}, #{content})
+    </insert>
+
+    <!--
+      带 status = 'NORMAL' 条件:重复删除返回 0 行,调用方据此不重复扣 comment_count。
+      没有这个条件的话,连点两次删除会把计数扣成负数,而计数是冗余字段,错了不会有任何地方报错。
+    -->
+    <update id="softDelete">
+        UPDATE skill_comment
+        SET status = 'DELETED', updated_at = now()
+        WHERE id = #{commentId} AND status = 'NORMAL'
+    </update>
+
+</mapper>

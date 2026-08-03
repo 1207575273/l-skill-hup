@@ -366,4 +366,17 @@
         DELETE FROM skill WHERE id = #{skillId}
     </delete>
 
+    <!--
+      评论数的增量维护(业务建模文档 5.15:追加/移除语义走增量,不重算)。SQL 放在这里而不是
+      SkillCommentMapper.xml —— 它 UPDATE 的是 skill 表,SQL 跟着被写的表走,不跟着触发它的动作走。
+
+      GREATEST(...,0) 兜底:计数是冗余字段,真出现算术漂移时宁可停在 0,也不要在页面上显示负数——
+      那既解释不通,也会让人以为是更严重的数据损坏。
+    -->
+    <update id="adjustCommentCount">
+        UPDATE skill
+        SET comment_count = GREATEST(comment_count + #{delta}, 0)
+        WHERE id = #{skillId}
+    </update>
+
 </mapper>

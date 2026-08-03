@@ -209,6 +209,11 @@ public class SkillRepositoryImpl implements SkillRepository {
     }
 
     @Override
+    public void adjustCommentCount(long skillId, int delta) {
+        skillMapper.adjustCommentCount(skillId, delta);
+    }
+
+    @Override
     public void updateStatus(long skillId, SkillStatus status) {
         skillMapper.updateStatus(skillId, status.name());
     }

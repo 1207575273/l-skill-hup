@@ -204,6 +204,25 @@ export interface SkillSummary {
 }
 
 /**
+ * 一条评论(或回复)。
+ *
+ * `content` 对已删除的评论是 `null` —— 服务端从不下发已删除的正文,所以"不小心把它渲染出去"
+ * 在类型上就做不到。占位文案("该评论已删除")由前端决定,服务端只如实告知 `deleted: true`。
+ *
+ * `replies` 只可能出现在顶级评论上(只允许一层回复),回复自己的 `replies` 恒为空数组 ——
+ * 是空数组不是 null,不用为"没有回复"和"字段缺失"写两套判断。
+ */
+export interface SkillCommentItem {
+  readonly id: number
+  readonly parentId: number | null
+  readonly author: SkillOwner | null
+  readonly content: string | null
+  readonly deleted: boolean
+  readonly createdAt: string
+  readonly replies: SkillCommentItem[]
+}
+
+/**
  * `GET /skills/manage` 的行。**与 `SkillSummary` 是两个类型,不要合并**:
  * 管理视图含已下架,所以 `status` 是它的主信息;公开列表恒为 `PUBLISHED`,带上那个字段只是噪音。
  * 字段也刻意更少 —— 管理页是操作表格,不渲染卡片,不需要摘要、标签、点赞收藏数。

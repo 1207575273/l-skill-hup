@@ -117,6 +117,15 @@ public interface SkillRepository {
      */
     void deleteSkillCascade(long skillId);
 
+    /**
+     * 增量调整 {@code skill.comment_count}(业务建模文档 5.15:追加/移除语义走增量,不重算)。
+     *
+     * <p>放在 {@code SkillRepository} 而不是 {@code SkillCommentRepository}:它写的是 {@code skill} 表。
+     * 仓储按<b>被写的表</b>划分,不按触发它的动作划分 —— 否则每加一个会改 skill 计数的动作,
+     * 就多一个能写 skill 表的入口,谁在改这张表就再也说不清了。
+     */
+    void adjustCommentCount(long skillId, int delta);
+
     /** 下架 / 恢复,只改 status,不动版本、评论、表态、收藏(业务建模文档 5.15)。 */
     void updateStatus(long skillId, SkillStatus status);
 }

@@ -103,4 +103,7 @@ public interface SkillMapper {
     void deleteCommentsBySkillId(@Param("skillId") long skillId);
 
     void deleteSkillById(@Param("skillId") long skillId);
+
+    /** 增量调整 skill.comment_count(5.15:追加/移除语义走增量,不重算)。 */
+    void adjustCommentCount(@Param("skillId") long skillId, @Param("delta") int delta);
 }

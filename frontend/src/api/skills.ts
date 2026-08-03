@@ -2,6 +2,7 @@ import { API_BASE_URL, apiGet, apiPost, apiPostFormData } from './client'
 import type {
   ManagedSkill,
   PageResponse,
+  SkillCommentItem,
   SkillDetail,
   SkillFileContent,
   SkillListFilter,
@@ -72,6 +73,37 @@ export function fetchSkillFileContent(
     query: { path },
     signal: options?.signal,
   })
+}
+
+/** `GET /skills/{id}/comments`,匿名可用。顶级分页,回复随顶级返回。 */
+export function fetchSkillComments(
+  skillId: number,
+  params: { readonly page?: number; readonly size?: number } = {},
+  options?: AbortableOptions,
+): Promise<PageResponse<SkillCommentItem>> {
+  return apiGet<PageResponse<SkillCommentItem>>(`/skills/${skillId}/comments`, {
+    query: { page: params.page, size: params.size },
+    signal: options?.signal,
+  })
+}
+
+export interface AddCommentPayload {
+  /** 留空发顶级评论;非空表示回复,且只能回复顶级评论(服务端会校验)。 */
+  readonly parentId?: number
+  readonly content: string
+}
+
+/** `POST /skills/{id}/comments`(需登录),发表评论或回复。 */
+export function addSkillComment(
+  skillId: number,
+  payload: AddCommentPayload,
+): Promise<SkillCommentItem> {
+  return apiPost<SkillCommentItem>(`/skills/${skillId}/comments`, payload)
+}
+
+/** `POST /comments/{id}/delete`(需登录,作者本人 / ADMIN),软删除。返回 204 无响应体。 */
+export function deleteSkillComment(commentId: number): Promise<void> {
+  return apiPost<void>(`/comments/${commentId}/delete`)
 }
 
 /** `POST /skills/precheck`(需登录),上传前即时反馈,不落库。 */

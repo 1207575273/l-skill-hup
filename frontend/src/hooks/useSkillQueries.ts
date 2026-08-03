@@ -3,6 +3,7 @@ import { skillKeys } from '../api/queryKeys'
 import type { ManagedSkillFilter } from '../api/skills'
 import {
   fetchManagedSkills,
+  fetchSkillComments,
   fetchSkillDetail,
   fetchSkillFileContent,
   fetchSkillList,
@@ -40,6 +41,20 @@ export function useManagedSkills(filter: ManagedSkillFilter, options?: QueryTogg
   return useQuery({
     queryKey: skillKeys.managed(filter),
     queryFn: ({ signal }) => fetchManagedSkills(filter, { signal }),
+    enabled: options?.enabled ?? true,
+  })
+}
+
+/**
+ * `GET /skills/{id}/comments`,匿名可用。顶级分页,回复随顶级返回。
+ *
+ * 不设 staleTime:评论是这个页面上唯一会被别人实时改动的内容,拿旧缓存回答"评论区有什么"
+ * 恰好会让人以为自己刚发的评论没成功。
+ */
+export function useSkillComments(skillId: number, page: number, options?: QueryToggle) {
+  return useQuery({
+    queryKey: skillKeys.comments(skillId, page),
+    queryFn: ({ signal }) => fetchSkillComments(skillId, { page }, { signal }),
     enabled: options?.enabled ?? true,
   })
 }

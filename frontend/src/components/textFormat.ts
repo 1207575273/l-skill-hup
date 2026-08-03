@@ -25,3 +25,19 @@ export function formatDateOnly(isoDateTime: string): string {
   }
   return parsed.toISOString().slice(0, 10)
 }
+
+/**
+ * 精确到分钟的时间。评论区专用 —— 那里同一天会有多条,只显示日期就分不出先后,
+ * 而"谁先说的"恰恰是读一段讨论时最需要的信息。
+ *
+ * 与 {@link formatDateOnly} 一样按 UTC 输出而不是本地时区:全站口径统一,
+ * 混用会让同一份数据在两处显示成不同的时间,那种不一致比"时区不对"更让人困惑。
+ * 解析失败时原样返回,不让一条脏数据把整个列表崩掉。
+ */
+export function formatDateTime(isoDateTime: string): string {
+  const parsed = new Date(isoDateTime)
+  if (Number.isNaN(parsed.getTime())) {
+    return isoDateTime
+  }
+  return parsed.toISOString().slice(0, 16).replace('T', ' ')
+}
