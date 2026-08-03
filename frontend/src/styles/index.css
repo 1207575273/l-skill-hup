@@ -2,13 +2,51 @@
 @import "tailwindcss";
 
 /* 设计 token 统一在这里定义。JSX 里不许出现 text-[#1a2b3c] 这类魔法值。
-   v4 用 CSS 的 @theme 块,不再有 tailwind.config.ts 的 theme.extend。 */
+   v4 用 CSS 的 @theme 块,不再有 tailwind.config.ts 的 theme.extend。
+
+   灰阶、间距刻度、圆角基础刻度(rounded-sm、rounded-md 这一档)等已由 Tailwind
+   自带的默认主题(node_modules 下 tailwindcss 包的 theme.css)提供,本身就是
+   token 化的 CSS 变量,直接用不算魔法值。这里只补项目独有、默认主题没有的语义:
+   品牌色、认证与错误状态色、头像调色板、组件专用圆角。dark 变体用 v4 默认的
+   prefers-color-scheme 行为,未额外声明 @custom-variant(没有手动切换主题的需求)。 */
 @theme {
+  /* 品牌色:主操作按钮、链接、焦点环 */
   --color-brand-50: oklch(0.97 0.02 259);
   --color-brand-100: oklch(0.93 0.05 259);
   --color-brand-500: oklch(0.62 0.19 259);
   --color-brand-600: oklch(0.55 0.19 259);
   --color-brand-700: oklch(0.48 0.17 259);
 
+  /* 语义色:认证徽章(展示约定 7.3)与 ErrorBanner 共用同一套,不按场景各开一份。
+     100/300 是为深色模式下"浅底深字"反过来变"深底浅字"补的过渡色阶,不是凑数。 */
+  --color-success-50: oklch(0.96 0.05 155);
+  --color-success-100: oklch(0.92 0.08 155);
+  --color-success-300: oklch(0.8 0.14 155);
+  --color-success-600: oklch(0.6 0.16 155);
+  --color-success-700: oklch(0.52 0.15 155);
+
+  --color-danger-50: oklch(0.96 0.04 25);
+  --color-danger-100: oklch(0.92 0.07 25);
+  --color-danger-300: oklch(0.8 0.16 25);
+  --color-danger-500: oklch(0.63 0.22 25);
+  --color-danger-600: oklch(0.55 0.22 25);
+  --color-danger-700: oklch(0.46 0.2 25);
+
+  /* 卡片左上角首字母头像色块(展示约定 7.1):固定调色板,由 skill.name 哈希稳定
+     映射,不随机。用 CSS 变量而非 Tailwind 类名 —— 类名要拼成 `bg-avatar-${n}`
+     这种运行时字符串,Tailwind 的静态扫描器扫不到会被摇树摇掉;组件里改用
+     `style={{ backgroundColor: 'var(--color-avatar-N)' }}` 读取,见
+     components/avatarColor.ts。 */
+  --color-avatar-1: oklch(0.62 0.19 259);
+  --color-avatar-2: oklch(0.65 0.19 20);
+  --color-avatar-3: oklch(0.65 0.16 150);
+  --color-avatar-4: oklch(0.6 0.2 310);
+  --color-avatar-5: oklch(0.72 0.17 90);
+  --color-avatar-6: oklch(0.63 0.14 200);
+  --color-avatar-7: oklch(0.64 0.2 350);
+  --color-avatar-8: oklch(0.58 0.14 60);
+
+  /* 圆角:卡片与表单控件分开定义,允许两者独立调整,不共用一个语义 */
   --radius-card: 0.75rem;
+  --radius-control: 0.5rem;
 }

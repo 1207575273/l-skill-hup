@@ -23,4 +23,17 @@ describe('AppRouter', () => {
 
     expect(screen.getByText(expectedText)).toBeInTheDocument()
   })
+
+  it('should_wrap_every_page_with_app_layout_when_navigating', () => {
+    render(
+      <MemoryRouter initialEntries={['/upload']}>
+        <AppRouter />
+      </MemoryRouter>,
+    )
+
+    // 布局导航(A1 本轮新增)与页面占位(此前已有)必须同时在场,证明五个页面
+    // 都套进了 AppLayout,而不是路由表被改坏、页面内容跑没了。
+    expect(screen.getByRole('link', { name: 'skill-hub' })).toBeInTheDocument()
+    expect(screen.getByText('上传页占位')).toBeInTheDocument()
+  })
 })
