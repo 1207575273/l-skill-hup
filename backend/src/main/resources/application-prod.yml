@@ -32,6 +32,8 @@ server:
 
 mybatis:
   mapper-locations: classpath:mapper/*.xml
+  # 自定义 TypeHandler(java.time.Instant <-> TIMESTAMPTZ)统一放这个包,starter 自动扫描注册。
+  type-handlers-package: com.landray.skillhub.infrastructure.persistence.typehandler
   configuration:
     map-underscore-to-camel-case: true
 
@@ -68,6 +70,15 @@ skillhub:
   storage:
     type: local
     local-root: ${ARTIFACT_ROOT}
+
+  auth:
+    local-register-enabled: ${LOCAL_REGISTER_ENABLED:false}
+    bootstrap-admin:
+      login: ${BOOTSTRAP_ADMIN_LOGIN:admin}
+      # 刻意不留默认值:未配置时 BootstrapAdminEnvironmentValidator 在启动最早期(EnvironmentPostProcessor,
+      # 早于 DataSource/Flyway)拒绝启动。一个带公开默认密码的 ADMIN 比没有管理员更危险,
+      # "启动失败"能被立刻发现,"默认密码"不会(业务建模文档 3.2)。
+      password: ${BOOTSTRAP_ADMIN_PASSWORD:}
 
 # 日志:控制台人类可读(交给 docker logs),文件 JSONL(ECS)落挂载卷。
 logging:

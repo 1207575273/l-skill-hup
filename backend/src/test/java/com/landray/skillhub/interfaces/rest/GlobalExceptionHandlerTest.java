@@ -17,8 +17,11 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.landray.skillhub.application.auth.AuthApplicationService;
+import com.landray.skillhub.interfaces.rest.auth.CurrentUserAccessor;
 import com.landray.skillhub.shared.exception.ResourceNotFoundException;
 import com.landray.skillhub.shared.logging.TraceIdConstants;
 
@@ -33,6 +36,12 @@ import com.landray.skillhub.shared.logging.TraceIdConstants;
  * <p>{@code server.servlet.context-path} 清空是因为切片测试仍会加载 {@code application-dev.yml}(默认激活 dev
  * profile),里面把 context-path 定死成 {@code /skillhub}——这里验证的是 GlobalExceptionHandler 本身的行为,与
  * context-path 无关,清空后测试路径不用平白多带一段前缀,也不会因为哪天 dev 的 context-path 改了而被带着遭殃。
+ *
+ * <p>{@code @MockitoBean AuthApplicationService} / {@code CurrentUserAccessor}:{@code @WebMvcTest} 会把全局的
+ * {@code WebMvcConfigurer}(认证拦截器的注册配置)与实现了 {@code HandlerInterceptor} 的
+ * {@code AuthenticationInterceptor} 一并装配进来,而它的构造函数依赖这两个 bean——这个探针本身不测认证
+ * (探针接口都没标 {@code @RequireLogin}/{@code @RequireAdmin},拦截器对它们全部放行),但整个 web 层切片仍然
+ * 需要这两个依赖才能起得来,mock 掉即可,不需要真实实现。
  */
 @WebMvcTest(controllers = GlobalExceptionHandlerProbeController.class)
 @TestPropertySource(properties = "server.servlet.context-path=")
@@ -40,6 +49,12 @@ class GlobalExceptionHandlerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockitoBean
+    private AuthApplicationService authApplicationService;
+
+    @MockitoBean
+    private CurrentUserAccessor currentUserAccessor;
 
     @Test
     @DisplayName("BusinessException 子类携带 404 时,响应状态码、错误体与 traceId 都正确")

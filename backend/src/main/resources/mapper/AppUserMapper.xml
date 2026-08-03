@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.landray.skillhub.infrastructure.persistence.mapper.AppUserMapper">
+
+    <!--
+        insert 用 Map 而不是直接传 AppUser 记录：useGeneratedKeys 需要把生成的 id 写回参数对象，
+        而 AppUser 是不可变 record（没有 setter），MyBatis 的 MetaObject 写不回去会抛
+        ReflectionException。Map 天然支持 put 回写，是 MyBatis 处理"不可变领域对象 + 自增主键"
+        的标准写法；RepositoryImpl 插入后用返回的 id 重新拼一个带真实 id 的 AppUser 实例。
+    -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id"
+            parameterType="map">
+        INSERT INTO app_user (display_name, employee_no, email, avatar_url, role, status, merged_into_user_id)
+        VALUES (#{displayName}, #{employeeNo}, #{email}, #{avatarUrl}, #{role}, #{status}, #{mergedIntoUserId})
+    </insert>
+
+    <!-- update 只读参数，不需要写回，可以直接传不可变的 AppUser 记录。 -->
+    <update id="update" parameterType="com.landray.skillhub.domain.model.AppUser">
+        UPDATE app_user
+        SET display_name = #{displayName},
+            employee_no = #{employeeNo},
+            email = #{email},
+            avatar_url = #{avatarUrl},
+            role = #{role},
+            status = #{status},
+            merged_into_user_id = #{mergedIntoUserId}
+        WHERE id = #{id}
+    </update>
+
+    <select id="selectById" resultType="com.landray.skillhub.domain.model.AppUser">
+        SELECT id, display_name, employee_no, email, avatar_url, role, status, merged_into_user_id,
+               created_at, updated_at
+        FROM app_user
+        WHERE id = #{id}
+    </select>
+
+    <select id="selectByIds" resultType="com.landray.skillhub.domain.model.AppUser">
+        SELECT id, display_name, employee_no, email, avatar_url, role, status, merged_into_user_id,
+               created_at, updated_at
+        FROM app_user
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <!--
+        provider 过滤用 EXISTS 子查询 join user_identity，而不是在 app_user 上加冗余列——
+        一个用户可能同时持有多种 provider，过滤条件只是"至少有一个匹配"，不适合做成 app_user 的直接列。
+    -->
+    <select id="selectPage" resultType="com.landray.skillhub.domain.model.AppUser">
+        SELECT id, display_name, employee_no, email, avatar_url, role, status, merged_into_user_id,
+               created_at, updated_at
+        FROM app_user u
+        <where>
+            <if test="provider != null">
+                EXISTS (
+                    SELECT 1 FROM user_identity ui
+                    WHERE ui.user_id = u.id AND ui.provider = #{provider}
+                )
+            </if>
+        </where>
+        ORDER BY id
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <!-- 与 selectPage 结构同构（业务建模文档 6.3），否则分页 total 与实际返回的页对不上。 -->
+    <select id="countAll" resultType="long">
+        SELECT count(*)
+        FROM app_user u
+        <where>
+            <if test="provider != null">
+                EXISTS (
+                    SELECT 1 FROM user_identity ui
+                    WHERE ui.user_id = u.id AND ui.provider = #{provider}
+                )
+            </if>
+        </where>
+    </select>
+
+</mapper>

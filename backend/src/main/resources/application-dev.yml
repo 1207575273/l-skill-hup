@@ -33,6 +33,8 @@ server:
 
 mybatis:
   mapper-locations: classpath:mapper/*.xml
+  # 自定义 TypeHandler(java.time.Instant <-> TIMESTAMPTZ)统一放这个包,starter 自动扫描注册。
+  type-handlers-package: com.landray.skillhub.infrastructure.persistence.typehandler
   configuration:
     map-underscore-to-camel-case: true
 
@@ -66,6 +68,15 @@ skillhub:
     # P0 用本地文件夹实现 ArtifactStorage,业务代码只认接口
     type: local
     local-root: ${ARTIFACT_ROOT:./data/artifacts}
+
+  auth:
+    # P0 默认关闭自助注册:内网谁都能访问页面,开着意味着任何人都能注册后上传恶意 skill
+    # (业务建模文档 3.2)。dev 同样默认关闭,要联调注册流程时手动打开。
+    local-register-enabled: ${LOCAL_REGISTER_ENABLED:false}
+    bootstrap-admin:
+      login: ${BOOTSTRAP_ADMIN_LOGIN:admin}
+      # dev 给一个开箱即用的默认密码,方便本机启动;prod 绝不允许有默认值(见 application-prod.yml)。
+      password: ${BOOTSTRAP_ADMIN_PASSWORD:admin123456}
 
 # 日志:控制台人类可读,文件 JSONL(ECS)。形态与 prod 一致,量级按 dev 放宽。
 logging:

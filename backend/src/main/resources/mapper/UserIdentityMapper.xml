@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.landray.skillhub.infrastructure.persistence.mapper.UserIdentityMapper">
+
+    <!-- Map 参数的理由见 AppUserMapper.xml 顶部注释,UserIdentity 同样是不可变 record。 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id"
+            parameterType="map">
+        INSERT INTO user_identity (user_id, provider, external_id, credential, display_hint,
+                                    failed_login_count, locked_until, last_login_at, status)
+        VALUES (#{userId}, #{provider}, #{externalId}, #{credential}, #{displayHint},
+                #{failedLoginCount}, #{lockedUntil}, #{lastLoginAt}, #{status})
+    </insert>
+
+    <update id="update" parameterType="com.landray.skillhub.domain.model.UserIdentity">
+        UPDATE user_identity
+        SET credential = #{credential},
+            display_hint = #{displayHint},
+            failed_login_count = #{failedLoginCount},
+            locked_until = #{lockedUntil},
+            last_login_at = #{lastLoginAt},
+            status = #{status}
+        WHERE id = #{id}
+    </update>
+
+    <select id="selectById" resultType="com.landray.skillhub.domain.model.UserIdentity">
+        SELECT id, user_id, provider, external_id, credential, display_hint, failed_login_count,
+               locked_until, last_login_at, status, created_at, updated_at
+        FROM user_identity
+        WHERE id = #{id}
+    </select>
+
+    <select id="selectByProviderAndExternalId" resultType="com.landray.skillhub.domain.model.UserIdentity">
+        SELECT id, user_id, provider, external_id, credential, display_hint, failed_login_count,
+               locked_until, last_login_at, status, created_at, updated_at
+        FROM user_identity
+        WHERE provider = #{provider} AND external_id = #{externalId}
+    </select>
+
+    <select id="selectByUserId" resultType="com.landray.skillhub.domain.model.UserIdentity">
+        SELECT id, user_id, provider, external_id, credential, display_hint, failed_login_count,
+               locked_until, last_login_at, status, created_at, updated_at
+        FROM user_identity
+        WHERE user_id = #{userId}
+        ORDER BY id
+    </select>
+
+    <select id="selectByUserIds" resultType="com.landray.skillhub.domain.model.UserIdentity">
+        SELECT id, user_id, provider, external_id, credential, display_hint, failed_login_count,
+               locked_until, last_login_at, status, created_at, updated_at
+        FROM user_identity
+        WHERE user_id IN
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">
+            #{userId}
+        </foreach>
+        ORDER BY user_id, id
+    </select>
+
+</mapper>
