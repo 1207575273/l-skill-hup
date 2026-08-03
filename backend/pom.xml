@@ -86,9 +86,33 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- OpenAPI 3.1 文档生成 + swagger-ui。其 parent pom 就是
+             spring-boot-starter-parent:4.1.0,版本与本项目锁定的 Spring Boot 主线一致(已用
+             `curl .../springdoc-openapi/3.1.0/springdoc-openapi-3.1.0.pom` 核实,springdoc 2.x 是给
+             Spring Boot 3 的,不能用,详见业务建模文档 8.1)。
+             注意:它会把 Jackson 2 拖回 classpath,而且不止 databind ——
+             swagger-core-jakarta:2.2.52 一次带进四个,全是 compile scope:
+             jackson-databind / jackson-core / jackson-dataformat-yaml / jackson-datatype-jsr310。
+             ArchUnit 的 mustNotUseJacksonTwoProcessingEngine 规则专门拦这个,
+             实测依赖链与"为什么规则要全禁而不是列举子包"见该规则的注释。 -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>3.1.0</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Spring Boot 4 把测试自动配置也按功能拆开了,starter-test 不会因为主依赖里有 starter-web
+             就自动带上 @WebMvcTest/MockMvc 支持,必须显式引入(与根 CLAUDE.md 踩坑点 8.2 同一套教训)。
+             注意包名也变了:@WebMvcTest 现在在 org.springframework.boot.webmvc.test.autoconfigure 下,
+             不是 3.x 的 org.springframework.boot.test.autoconfigure.web.servlet。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
