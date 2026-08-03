@@ -16,6 +16,9 @@ coverage/
 
 # IDE
 .idea/
+# IntelliJ 默认把 class 编到 <仓库根>/out/production/<模块>,不是 target/classes。
+# 这也是 ProjectHomeEnvironmentPostProcessor 必须同时认两种输出布局的原因。
+out/
 *.iml
 *.ipr
 *.iws
