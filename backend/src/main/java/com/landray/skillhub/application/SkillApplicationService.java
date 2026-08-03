@@ -1,5 +1,6 @@
 package com.landray.skillhub.application;
 
+import java.io.InputStream;
 import java.util.List;
 
 import org.slf4j.Logger;
@@ -14,7 +15,12 @@ import com.landray.skillhub.domain.model.SkillSortOption;
 import com.landray.skillhub.domain.model.SkillSource;
 import com.landray.skillhub.domain.model.SkillStatus;
 import com.landray.skillhub.domain.model.SkillVersion;
+import com.landray.skillhub.domain.model.SkillVersionFile;
+import com.landray.skillhub.domain.model.SkillVersionFileContent;
+import com.landray.skillhub.domain.model.SkillVersionFilePreviewer;
 import com.landray.skillhub.domain.repository.SkillRepository;
+import com.landray.skillhub.domain.service.SkillArtifactManifestReader;
+import com.landray.skillhub.domain.storage.ArtifactStorage;
 import com.landray.skillhub.shared.exception.AccessDeniedException;
 import com.landray.skillhub.shared.exception.ResourceNotFoundException;
 import com.landray.skillhub.shared.logging.AuditLog;
@@ -43,16 +49,26 @@ public class SkillApplicationService {
     private static final int MIN_SIZE = 1;
 
     private static final String SKILL_NOT_FOUND_CODE = "SKILL_NOT_FOUND";
+    private static final String SKILL_VERSION_NOT_FOUND_CODE = "SKILL_VERSION_NOT_FOUND";
+    private static final String SKILL_VERSION_FILE_NOT_FOUND_CODE = "SKILL_VERSION_FILE_NOT_FOUND";
 
     private final SkillRepository skillRepository;
     private final SkillTagAssignmentService tagAssignmentService;
     private final AuditLog auditLog;
+    private final ArtifactStorage artifactStorage;
+
+    /** 无状态的纯 Java 解析器,domain 服务不是 Spring bean,直接 new(与 SkillUploadApplicationService 同一模式)。 */
+    private final SkillArtifactManifestReader manifestReader = new SkillArtifactManifestReader();
 
     public SkillApplicationService(
-            SkillRepository skillRepository, SkillTagAssignmentService tagAssignmentService, AuditLog auditLog) {
+            SkillRepository skillRepository,
+            SkillTagAssignmentService tagAssignmentService,
+            AuditLog auditLog,
+            ArtifactStorage artifactStorage) {
         this.skillRepository = skillRepository;
         this.tagAssignmentService = tagAssignmentService;
         this.auditLog = auditLog;
+        this.artifactStorage = artifactStorage;
     }
 
     @Transactional(readOnly = true)
@@ -88,12 +104,87 @@ public class SkillApplicationService {
         return skillRepository.findDetailById(skillId).orElseThrow(() -> notFound(skillId));
     }
 
+    /**
+     * 详情页"文件树":现读已发布制品 zip 的中央目录,不落库(方案取舍见 {@link SkillArtifactManifestReader}
+     * 类注释)。<b>刻意不加 {@code @Transactional}</b>——这里不碰数据库,只碰 {@link ArtifactStorage}。
+     *
+     * <p>制品缺失(理论上不该发生,但不排除存储被误清空)或不是合法 zip(制品损坏)都<b>不应该让详情接口整体
+     * 失败</b>——详情页的主体是元数据,文件清单只是附加信息,降级为空清单,WARN 留痕供巡检定位坏制品
+     * (backend/CLAUDE.md 6.6)。这是本方法唯一的编排职责,解析本身交给 {@link SkillArtifactManifestReader}。
+     */
+    public List<SkillVersionFile> getLatestVersionFileManifest(Skill skill) {
+        SkillVersion latestVersion = skill.latestVersion();
+        if (latestVersion == null || latestVersion.artifactKey() == null) {
+            return List.of();
+        }
+        // 流的关闭责任交给 SkillArtifactManifestReader.read(...)(它内部就是一个 try-with-resources),
+        // 这里不重复用 try-with-resources 包一层——ResourceNotFoundException(制品不存在)与
+        // UncheckedIOException(制品不是合法 zip)都是未受检异常,不需要额外声明/捕获 IOException。
+        try {
+            InputStream in = artifactStorage.openRead(latestVersion.artifactKey());
+            return manifestReader.read(in);
+        } catch (RuntimeException e) {
+            log.warn(
+                    "文件清单读取失败,详情页文件树将为空, skillId={}, artifactKey={}",
+                    skill.id(),
+                    latestVersion.artifactKey(),
+                    e);
+            return List.of();
+        }
+    }
+
     @Transactional(readOnly = true)
     public List<SkillVersion> listVersions(long skillId) {
         if (!skillRepository.existsById(skillId)) {
             throw notFound(skillId);
         }
         return skillRepository.findVersionsBySkillId(skillId);
+    }
+
+    /**
+     * 详情页"文件预览":版本内某一个具体文件的内容(点开文件树上的一个节点)。<b>刻意不加 {@code @Transactional}</b>
+     * ——除了一次只读的 {@code findVersionArtifactKey} 查询外,主体工作是打开 {@link ArtifactStorage} 与解析 zip,
+     * 不需要事务边界。
+     *
+     * <p>{@code path} 来自 HTTP 请求,是外部输入,必须当成攻击面(根 CLAUDE.md 第七节):即使只在 zip 条目名里做
+     * 精确字符串匹配、不碰文件系统,仍先用 {@link SkillArtifactManifestReader#isSafeRelativePath} 快速拒绝
+     * {@code ..}/绝对路径/控制字符,再进入清单匹配——两次校验的理由与边界见该方法的类注释。
+     *
+     * <p>{@code versionId} 必须真的属于这个 {@code skillId},由 {@link SkillRepository#findVersionArtifactKey}
+     * 的 SQL 联合条件天然保证(需求第 5 条)。版本不存在、版本属于别的 skill、路径不安全、清单里没有这个文件、
+     * 制品缺失或损坏——这五种情况统一表现为 404,不额外区分向调用方泄漏的信息,只在服务端日志留痕。
+     *
+     * <p>制品缺失或不是合法 zip:与 {@link #getLatestVersionFileManifest} 同样的读取路径,但降级口径不同——那边
+     * 清单可以退化成空列表,这里用户明确点了一个文件,没有"退化"的余地,404 更诚实。WARN 留痕(backend/CLAUDE.md
+     * 6.6:安全事件一律 WARN 起步),带 skillId / artifactKey,供巡检定位坏制品。
+     */
+    public SkillVersionFileContent getVersionFileContent(long skillId, long versionId, String path) {
+        if (!SkillArtifactManifestReader.isSafeRelativePath(path)) {
+            log.warn("拒绝不安全的版本文件预览路径, skillId={}, versionId={}", skillId, versionId);
+            throw fileNotFound(skillId, versionId);
+        }
+        String artifactKey = skillRepository
+                .findVersionArtifactKey(skillId, versionId)
+                .orElseThrow(() -> versionNotFound(skillId, versionId));
+
+        byte[] rawContent;
+        try {
+            InputStream in = artifactStorage.openRead(artifactKey);
+            rawContent = manifestReader.readFileContent(in, path).orElse(null);
+        } catch (RuntimeException e) {
+            log.warn(
+                    "版本文件预览读取失败,制品可能缺失或损坏, skillId={}, versionId={}, artifactKey={}",
+                    skillId,
+                    versionId,
+                    artifactKey,
+                    e);
+            throw fileNotFound(skillId, versionId);
+        }
+        if (rawContent == null) {
+            throw fileNotFound(skillId, versionId);
+        }
+
+        return SkillVersionFilePreviewer.preview(path, rawContent);
     }
 
     /**
@@ -169,6 +260,16 @@ public class SkillApplicationService {
 
     private ResourceNotFoundException notFound(long skillId) {
         return new ResourceNotFoundException(SKILL_NOT_FOUND_CODE, "skill 不存在, id=" + skillId);
+    }
+
+    private ResourceNotFoundException versionNotFound(long skillId, long versionId) {
+        return new ResourceNotFoundException(
+                SKILL_VERSION_NOT_FOUND_CODE, "skill 版本不存在, skillId=" + skillId + ", versionId=" + versionId);
+    }
+
+    private ResourceNotFoundException fileNotFound(long skillId, long versionId) {
+        return new ResourceNotFoundException(
+                SKILL_VERSION_FILE_NOT_FOUND_CODE, "文件不存在, skillId=" + skillId + ", versionId=" + versionId);
     }
 
     private int normalizePage(Integer pageParam) {

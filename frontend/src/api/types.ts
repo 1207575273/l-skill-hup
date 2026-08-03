@@ -193,6 +193,14 @@ export interface SkillSummary {
   readonly updatedAt: string
   readonly owner: SkillOwner | null
   readonly tags: SkillTag[]
+  /**
+   * 最新版本的 id,没有任何版本时为 `null`。
+   *
+   * 列表页"加入安装单"需要它 —— 安装单的每一项都要 `versionId`。后端本来就已经拿着
+   * `latestVersion` 在算 `certification`,顺带返回这个 id 零查询成本;不给的话前端每点一次
+   * 都要再发一个请求去查版本列表。
+   */
+  readonly latestVersionId: number | null
 }
 
 /**
@@ -233,6 +241,35 @@ export interface SkillVersionDetail {
   readonly certifyNote: string | null
   readonly createdByUserId: number | null
   readonly createdAt: string
+  /**
+   * 制品里的文件清单,按 path 字典序。用于详情页把 skill 展开成文件树。
+   *
+   * `path` 是**剥壳后的相对路径**(不含顶层包裹目录),例如 `SKILL.md`、`references/guide.md`。
+   * 后端在响应时临时打开制品 zip 读中央目录得到,不解压内容;制品缺失或损坏时返回空数组
+   * 而不是让整个详情接口失败 —— 详情页的主体是元数据,文件清单只是附加信息。
+   */
+  readonly files: SkillVersionFile[]
+}
+
+/** 文件清单的一项。 */
+export interface SkillVersionFile {
+  readonly path: string
+  readonly sizeBytes: number
+}
+
+/**
+ * `GET /skills/{id}/versions/{versionId}/file?path=...` 的响应,详情页文件预览用。
+ *
+ * `previewable` 为 false 时 `content` 是 null,原因在 `notPreviewableReason` 里:
+ * `BINARY`(内容含 NUL 字节)或 `TOO_LARGE`(超过服务端阈值)。**判定在服务端做** ——
+ * 只有它拿得到字节,前端连内容都没有,没法自己判断。
+ */
+export interface SkillFileContent {
+  readonly path: string
+  readonly sizeBytes: number
+  readonly previewable: boolean
+  readonly content: string | null
+  readonly notPreviewableReason: 'BINARY' | 'TOO_LARGE' | null
 }
 
 /**

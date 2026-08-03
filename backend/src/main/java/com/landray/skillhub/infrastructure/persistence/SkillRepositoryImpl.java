@@ -110,6 +110,11 @@ public class SkillRepositoryImpl implements SkillRepository {
     }
 
     @Override
+    public Optional<String> findVersionArtifactKey(long skillId, long versionId) {
+        return Optional.ofNullable(skillMapper.selectVersionArtifactKey(skillId, versionId));
+    }
+
+    @Override
     public Optional<SkillVersion> findVersionByContentDigest(String contentDigest) {
         SkillDigestMatchRow row = skillMapper.selectVersionByContentDigest(contentDigest);
         if (row == null) {
@@ -273,7 +278,7 @@ public class SkillRepositoryImpl implements SkillRepository {
                         row.latestVersionId(),
                         row.id(),
                         row.latestVersionVersion(),
-                        null,
+                        row.latestVersionArtifactKey(),
                         null,
                         null,
                         row.latestVersionSizeBytes() == null ? 0L : row.latestVersionSizeBytes(),

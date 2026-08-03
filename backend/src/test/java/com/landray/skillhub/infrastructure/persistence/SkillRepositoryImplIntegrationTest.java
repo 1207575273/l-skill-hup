@@ -126,6 +126,22 @@ class SkillRepositoryImplIntegrationTest {
     }
 
     @Test
+    @DisplayName("详情查询会带出最新版本的 artifactKey——详情页现读制品清单的入口")
+    void should_returnLatestVersionArtifactKey_whenFindingDetailById() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "artifact-key-skill", "带制品键", "INTERNAL", owner, "PUBLISHED");
+            attachVersion(c, skillId, "1.0.0", NONE);
+
+            Optional<Skill> found = skillRepository.findDetailById(skillId);
+
+            assertThat(found).isPresent();
+            assertThat(found.get().latestVersion().artifactKey())
+                    .isEqualTo("artifacts/" + skillId + "/1.0.0.zip");
+        }
+    }
+
+    @Test
     @DisplayName("skill 不存在时详情查询返回空 Optional")
     void should_returnEmptyOptional_whenSkillDoesNotExist() {
         Optional<Skill> found = skillRepository.findDetailById(999_999L);
@@ -368,6 +384,52 @@ class SkillRepositoryImplIntegrationTest {
 
             assertThat(versions).extracting(SkillVersion::version).containsExactly("1.1.0", "1.0.0");
             assertThat(versions.get(0).certification()).isEqualTo(Certification.CERTIFIED);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // findVersionArtifactKey:版本文件预览接口的唯一输入,skillId + versionId 必须联合匹配
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("versionId 属于该 skillId 时返回 artifactKey")
+    void should_returnArtifactKey_whenVersionBelongsToSkill() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "file-preview-skill", "文件预览", "INTERNAL", owner, "PUBLISHED");
+            long versionId = attachVersion(c, skillId, "1.0.0", NONE);
+
+            Optional<String> artifactKey = skillRepository.findVersionArtifactKey(skillId, versionId);
+
+            assertThat(artifactKey).contains("artifacts/" + skillId + "/1.0.0.zip");
+        }
+    }
+
+    @Test
+    @DisplayName("versionId 存在但属于另一个 skill 时返回空——不能用 A 的 skillId 配 B 的 versionId 读到别人的文件")
+    void should_returnEmpty_whenVersionBelongsToDifferentSkill() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillA = insertSkill(c, "skill-a", "A", "INTERNAL", owner, "PUBLISHED");
+            long skillB = insertSkill(c, "skill-b", "B", "INTERNAL", owner, "PUBLISHED");
+            long versionOfA = attachVersion(c, skillA, "1.0.0", NONE);
+
+            Optional<String> artifactKey = skillRepository.findVersionArtifactKey(skillB, versionOfA);
+
+            assertThat(artifactKey).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("versionId 不存在时返回空")
+    void should_returnEmpty_whenVersionDoesNotExist() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "no-such-version-skill", "无此版本", "INTERNAL", owner, "PUBLISHED");
+
+            Optional<String> artifactKey = skillRepository.findVersionArtifactKey(skillId, 999_999L);
+
+            assertThat(artifactKey).isEmpty();
         }
     }
 

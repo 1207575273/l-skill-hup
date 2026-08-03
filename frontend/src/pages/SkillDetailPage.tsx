@@ -10,6 +10,8 @@ import { ErrorBanner } from '../components/ErrorBanner'
 import { Modal } from '../components/Modal'
 import { QuickInstallMenu } from '../components/QuickInstallMenu'
 import { SkillContentViewer } from '../components/SkillContentViewer'
+import { SkillFilePreview } from '../components/SkillFilePreview'
+import { SkillFileTree } from '../components/SkillFileTree'
 import { SkillMetadataEditForm } from '../components/SkillMetadataEditForm'
 import { SkillVersionList } from '../components/SkillVersionList'
 import { Spinner } from '../components/Spinner'
@@ -21,8 +23,9 @@ import {
 import { TagChip } from '../components/TagChip'
 import { formatDateOnly } from '../components/textFormat'
 import { useCurrentUser } from '../hooks/useAuthQueries'
+import { useInstallCartStore } from '../hooks/useInstallCartStore'
 import { useRelistSkill, useUnlistSkill, useUpdateSkillMetadata } from '../hooks/useSkillMutations'
-import { useSkillDetail, useSkillVersions } from '../hooks/useSkillQueries'
+import { useSkillDetail, useSkillFileContent, useSkillVersions } from '../hooks/useSkillQueries'
 import { useTags } from '../hooks/useTagQueries'
 
 const SKILL_NOT_FOUND_CODE = 'SKILL_NOT_FOUND'
@@ -51,6 +54,20 @@ export default function SkillDetailPage() {
 
   const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null)
   const [isEditOpen, setIsEditOpen] = useState(false)
+
+  const cartItems = useInstallCartStore((state) => state.items)
+  const toggleCartItem = useInstallCartStore((state) => state.toggleItem)
+
+  // 选中的文件路径。**换版本时要清空** —— 上一版有的文件下一版可能没有,
+  // 留着旧路径会让预览停在一个 404 上,而用户看不出是自己换了版本导致的。
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
+
+  // **必须在所有 early return 之前调用**:下面有四处提前返回(id 非法 / 加载中 / 404 / 请求失败),
+  // 把 hook 放在它们之后就是条件调用 hook,React 会在状态切换时报 hooks 顺序错乱。
+  // 所以这里不能等 skillQuery.data 就位再取值,只能从 optional chain 里拿,
+  // 拿不到时传 null,由 hook 自己的 enabled 关掉请求。
+  const fileVersionId = selectedVersionId ?? skillQuery.data?.latestVersion?.id ?? null
+  const fileContentQuery = useSkillFileContent(skillId ?? 0, fileVersionId, selectedFilePath)
 
   if (skillId === null) {
     return (
@@ -83,6 +100,9 @@ export default function SkillDetailPage() {
   const latestVersion = skill.latestVersion
   const effectiveVersionId = selectedVersionId ?? latestVersion?.id ?? null
   const versions = versionsQuery.data ?? []
+  // 按 skillId 判断即可:购物车对同一个 skill 只保留一项(store 的 addItem 就是按 skillId 去重的),
+  // 换版本不会变成两项。
+  const inInstallCart = cartItems.some((item) => item.skillId === skill.id)
 
   const currentUser = currentUserQuery.data
   const canManage = Boolean(
@@ -151,8 +171,25 @@ export default function SkillDetailPage() {
         </p>
 
         {latestVersion && effectiveVersionId !== null && (
-          <div>
+          <div className="flex items-center gap-2">
             <QuickInstallMenu skillId={skill.id} versionId={effectiveVersionId} />
+            {/*
+              详情页加入安装单用的是**当前选中的版本**,不是最新版 —— 用户特意翻到 1.0.3 再点"加入",
+              安装单里却躺着最新版,那是最难察觉的一类错。列表页没有版本选择,所以那边用 latestVersionId。
+            */}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() =>
+                toggleCartItem({
+                  skillId: skill.id,
+                  versionId: effectiveVersionId,
+                  skillDisplayName: skill.displayName,
+                })
+              }
+            >
+              {inInstallCart ? '已加入安装单' : '加入安装单'}
+            </Button>
           </div>
         )}
       </header>
@@ -173,6 +210,44 @@ export default function SkillDetailPage() {
           <EmptyState title="暂无可用版本" description="这个 skill 目前没有已发布的版本内容。" />
         )}
       </section>
+
+      {latestVersion && (
+        <section aria-labelledby="skill-files-heading" className="flex flex-col gap-3">
+          <h2
+            id="skill-files-heading"
+            className="text-lg font-semibold text-gray-900 dark:text-gray-100"
+          >
+            文件结构
+            <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
+              共 {latestVersion.fileCount} 个文件
+            </span>
+          </h2>
+          {/*
+            左树右预览。窄屏(默认)垂直堆叠、宽屏(md 起)左右分栏 —— 手机上并排会让两栏都窄到没法看。
+            固定 `h-[32rem]` 而不是让内容撑高:两栏各自滚动才谈得上"点左边看右边",
+            否则选一个长文件会把整页顶得老长,树被挤到屏幕外,下一次点击还得先滚回去。
+          */}
+          <div className="flex h-[32rem] flex-col gap-3 md:flex-row">
+            {/* 树固定宽度不参与伸缩:它的内容是路径,宽度随选中文件变化会让整个布局跳动 */}
+            <div className="h-48 shrink-0 md:h-full md:w-72">
+              <SkillFileTree
+                files={latestVersion.files}
+                selectedPath={selectedFilePath}
+                onSelectFile={setSelectedFilePath}
+              />
+            </div>
+            {/* min-w-0 必须有:否则 pre 里的长行会把这一栏撑开,把左侧的树挤出容器 */}
+            <div className="min-w-0 flex-1 overflow-hidden">
+              <SkillFilePreview
+                path={selectedFilePath}
+                content={fileContentQuery.data ?? null}
+                isLoading={fileContentQuery.isPending && selectedFilePath !== null}
+                isError={fileContentQuery.isError}
+              />
+            </div>
+          </div>
+        </section>
+      )}
 
       <section aria-labelledby="skill-versions-heading" className="flex flex-col gap-3">
         <h2

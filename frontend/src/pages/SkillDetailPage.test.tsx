@@ -26,6 +26,10 @@ function buildLatestVersion(overrides: Partial<SkillVersionDetail> = {}): SkillV
     version: '1.2.0',
     sizeBytes: 4096,
     fileCount: 6,
+    files: [
+      { path: 'SKILL.md', sizeBytes: 1024 },
+      { path: 'references/guide.md', sizeBytes: 2048 },
+    ],
     allowedTools: ['Read', 'Grep'],
     skillMdContent: '# SKILL.md 正文',
     readmeContent: null,
@@ -185,7 +189,9 @@ describe('SkillDetailPage', () => {
     renderPage()
 
     expect(await screen.findByText('当前显示:README.md')).toBeInTheDocument()
-    expect(screen.getByText('# README 正文')).toBeInTheDocument()
+    // 正文走 Markdown 渲染,`# README 正文` 会变成 <h1>README 正文</h1>,
+    // 不再有字面量 "# README 正文" 这个文本节点。
+    expect(screen.getByRole('heading', { name: 'README 正文' })).toBeInTheDocument()
   })
 
   it('should_fallback_to_skill_md_when_readme_missing', async () => {
@@ -198,7 +204,7 @@ describe('SkillDetailPage', () => {
     renderPage()
 
     expect(await screen.findByText('当前显示:SKILL.md(未提供 README.md)')).toBeInTheDocument()
-    expect(screen.getByText('# SKILL 正文')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'SKILL 正文' })).toBeInTheDocument()
   })
 
   it('should_not_crash_and_hide_quick_install_when_latest_version_is_null', async () => {

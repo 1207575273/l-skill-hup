@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 
 import com.landray.skillhub.domain.model.Skill;
+import com.landray.skillhub.domain.model.SkillVersionFile;
 
 /**
  * {@code GET /skills/{id}} 详情响应。刻意不含"当前用户的表态与收藏"字段——那是 P2 收藏/点赞点踩上线后才有意义
@@ -29,6 +30,10 @@ public record SkillDetailResponse(
         SkillVersionDetailResponse latestVersion) {
 
     public static SkillDetailResponse from(Skill skill) {
+        return from(skill, List.of());
+    }
+
+    public static SkillDetailResponse from(Skill skill, List<SkillVersionFile> latestVersionFiles) {
         return new SkillDetailResponse(
                 skill.id(),
                 skill.name().value(),
@@ -46,6 +51,6 @@ public record SkillDetailResponse(
                 skill.updatedAt(),
                 SkillOwnerResponse.from(skill.owner()),
                 skill.tags().stream().map(SkillTagResponse::from).toList(),
-                SkillVersionDetailResponse.from(skill.latestVersion()));
+                SkillVersionDetailResponse.from(skill.latestVersion(), latestVersionFiles));
     }
 }

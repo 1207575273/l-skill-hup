@@ -26,6 +26,12 @@ export const skillKeys = {
   details: () => [...skillKeys.all, 'detail'] as const,
   detail: (id: number) => [...skillKeys.details(), id] as const,
   versions: (id: number) => [...skillKeys.detail(id), 'versions'] as const,
+  /**
+   * 单个文件的内容。带上 versionId 与 path 两级 —— 同一个 skill 的不同版本、同一版本的不同文件
+   * 都是各自独立的缓存条目,切版本时不能复用上一版的内容。
+   */
+  file: (id: number, versionId: number, path: string) =>
+    [...skillKeys.detail(id), 'versions', versionId, 'file', path] as const,
 }
 
 export const tagKeys = {

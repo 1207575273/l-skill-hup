@@ -1,7 +1,15 @@
 import { useQuery } from '@tanstack/react-query'
 import { skillKeys } from '../api/queryKeys'
-import { fetchSkillDetail, fetchSkillList, fetchSkillVersions } from '../api/skills'
+import {
+  fetchSkillDetail,
+  fetchSkillFileContent,
+  fetchSkillList,
+  fetchSkillVersions,
+} from '../api/skills'
 import type { SkillListFilter } from '../api/types'
+
+/** 文件内容在版本发布后就不再变化,给一个长 staleTime,来回点同一个文件不重复请求。 */
+const SKILL_FILE_CONTENT_STALE_TIME_MS = 30 * 60_000
 
 /**
  * skill 读侧查询钩子,对应 `api/skills.ts` 的 GET 资源函数。服务端数据一律走 TanStack Query
@@ -35,5 +43,26 @@ export function useSkillVersions(skillId: number, options?: QueryToggle) {
     queryKey: skillKeys.versions(skillId),
     queryFn: ({ signal }) => fetchSkillVersions(skillId, { signal }),
     enabled: options?.enabled ?? true,
+  })
+}
+
+/**
+ * `GET /skills/{id}/versions/{versionId}/file?path=...`,详情页文件预览。
+ *
+ * 没选中文件时(`path` 为 null)不发请求 —— 详情页一进来就是未选中状态,恒开会白打一次 404。
+ * 内容按 (versionId, path) 缓存,来回点同一个文件不重复请求;文件内容在版本发布后不会再变,
+ * 给一个较长的 staleTime。
+ */
+export function useSkillFileContent(
+  skillId: number,
+  versionId: number | null,
+  path: string | null,
+) {
+  return useQuery({
+    queryKey: skillKeys.file(skillId, versionId ?? 0, path ?? ''),
+    queryFn: ({ signal }) =>
+      fetchSkillFileContent(skillId, versionId as number, path as string, { signal }),
+    enabled: versionId !== null && path !== null,
+    staleTime: SKILL_FILE_CONTENT_STALE_TIME_MS,
   })
 }

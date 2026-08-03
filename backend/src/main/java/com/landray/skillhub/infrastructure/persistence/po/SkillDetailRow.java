@@ -13,6 +13,10 @@ import com.landray.skillhub.domain.model.SkillStatus;
  * <p>与 {@link SkillListRow} 是两条不同的查询,不是同一行按需裁剪——详情页需要 {@code skill_md_content} /
  * {@code readme_content} 这类重字段,列表页刻意不选它们(业务建模文档 5.6 附近反复强调的"不能让重内容进列表页
  * 响应")。两个 PO 分开定义,SQL 层面也就自然分成两条 SELECT,不存在"一份大查询里挑字段用"的隐患。
+ *
+ * <p>{@code latestVersionArtifactKey} 只在这条详情查询里选(列表 / 版本列表不选)——它是详情页现读制品 zip 拿
+ * 文件清单的入口(见 {@link com.landray.skillhub.application.SkillApplicationService#getLatestVersionFileManifest}),
+ * 其余场景不需要打开制品,不必带上这一列。
  */
 public record SkillDetailRow(
         Long id,
@@ -34,6 +38,7 @@ public record SkillDetailRow(
         Instant updatedAt,
         Long latestVersionId,
         String latestVersionVersion,
+        String latestVersionArtifactKey,
         Long latestVersionSizeBytes,
         Integer latestVersionFileCount,
         List<String> latestVersionAllowedTools,

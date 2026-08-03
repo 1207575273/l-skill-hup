@@ -139,6 +139,7 @@
             <arg column="updated_at" javaType="java.time.Instant"/>
             <arg column="latest_version_id" javaType="java.lang.Long"/>
             <arg column="latest_version_version" javaType="java.lang.String"/>
+            <arg column="latest_version_artifact_key" javaType="java.lang.String"/>
             <arg column="latest_version_size_bytes" javaType="java.lang.Long"/>
             <arg column="latest_version_file_count" javaType="java.lang.Integer"/>
             <arg column="latest_version_allowed_tools" javaType="java.util.List"
@@ -165,6 +166,7 @@
             ou.employee_no                      AS owner_employee_no,
             sv.id                               AS latest_version_id,
             sv.version                          AS latest_version_version,
+            sv.artifact_key                     AS latest_version_artifact_key,
             sv.size_bytes                       AS latest_version_size_bytes,
             sv.file_count                       AS latest_version_file_count,
             sv.allowed_tools                    AS latest_version_allowed_tools,
@@ -197,6 +199,16 @@
     </select>
 
     <!--
+      版本文件预览接口(GET /skills/{skillId}/versions/{versionId}/file)的唯一输入。id + skill_id 联合条件
+      保证 versionId 必须真的属于这个 skillId,不能用 A skill 的 id 配 B skill 的 versionId 读到别人的文件。
+    -->
+    <select id="selectVersionArtifactKey" resultType="string">
+        SELECT artifact_key
+        FROM skill_version
+        WHERE id = #{versionId} AND skill_id = #{skillId}
+    </select>
+
+    <!--
       precheck 的重名检测(业务建模文档 6.2 的 existing 字段)复用 selectDetailById 同一份 resultMap——
       两条查询字段完全一致,只是 WHERE 条件从 id 换成 name,没必要为此单独定义一遍 resultMap。
     -->
@@ -210,6 +222,7 @@
             ou.employee_no                      AS owner_employee_no,
             sv.id                               AS latest_version_id,
             sv.version                          AS latest_version_version,
+            sv.artifact_key                     AS latest_version_artifact_key,
             sv.size_bytes                       AS latest_version_size_bytes,
             sv.file_count                       AS latest_version_file_count,
             sv.allowed_tools                    AS latest_version_allowed_tools,

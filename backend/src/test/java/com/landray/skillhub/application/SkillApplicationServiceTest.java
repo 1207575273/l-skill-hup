@@ -9,8 +9,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -24,6 +30,7 @@ import com.landray.skillhub.application.auth.AuthenticatedUser;
 import com.landray.skillhub.domain.exception.InvalidSkillSortException;
 import com.landray.skillhub.domain.exception.InvalidSkillSourceException;
 import com.landray.skillhub.domain.model.Certification;
+import com.landray.skillhub.domain.model.NotPreviewableReason;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillName;
 import com.landray.skillhub.domain.model.SkillOwner;
@@ -32,8 +39,12 @@ import com.landray.skillhub.domain.model.SkillSortOption;
 import com.landray.skillhub.domain.model.SkillSource;
 import com.landray.skillhub.domain.model.SkillStatus;
 import com.landray.skillhub.domain.model.SkillVersion;
+import com.landray.skillhub.domain.model.SkillVersionFile;
+import com.landray.skillhub.domain.model.SkillVersionFileContent;
+import com.landray.skillhub.domain.model.SkillVersionFilePreviewer;
 import com.landray.skillhub.domain.model.UserRole;
 import com.landray.skillhub.domain.repository.SkillRepository;
+import com.landray.skillhub.domain.storage.ArtifactStorage;
 import com.landray.skillhub.shared.exception.AccessDeniedException;
 import com.landray.skillhub.shared.exception.ResourceNotFoundException;
 import com.landray.skillhub.shared.logging.AuditLog;
@@ -45,6 +56,8 @@ import com.landray.skillhub.shared.model.PageResult;
 @ExtendWith(MockitoExtension.class)
 class SkillApplicationServiceTest {
 
+    private static final String ARTIFACT_KEY = "artifacts/1/1.0.0.zip";
+
     @Mock
     private SkillRepository skillRepository;
 
@@ -54,11 +67,14 @@ class SkillApplicationServiceTest {
     @Mock
     private AuditLog auditLog;
 
+    @Mock
+    private ArtifactStorage artifactStorage;
+
     private SkillApplicationService service;
 
     @BeforeEach
     void setUp() {
-        service = new SkillApplicationService(skillRepository, tagAssignmentService, auditLog);
+        service = new SkillApplicationService(skillRepository, tagAssignmentService, auditLog, artifactStorage);
     }
 
     private Skill sampleSkill() {
@@ -80,6 +96,40 @@ class SkillApplicationServiceTest {
                 null,
                 null,
                 List.of());
+    }
+
+    private Skill sampleSkillWithLatestVersion(String artifactKey) {
+        SkillVersion latestVersion = new SkillVersion(
+                10L, 1L, "1.0.0", artifactKey, null, null, 1024L, 2, List.of(), null, null, null,
+                Certification.NONE, null, null, null, 1L, null);
+        return new Skill(
+                1L,
+                new SkillName("code-review"),
+                "代码审查助手",
+                "描述",
+                SkillSource.INTERNAL,
+                new SkillOwner(2L, "张三", "80380486"),
+                "摘要",
+                SkillStatus.PUBLISHED,
+                0L,
+                0,
+                0,
+                0,
+                0,
+                null,
+                null,
+                latestVersion,
+                List.of());
+    }
+
+    private ByteArrayInputStream buildZipStream(String topDir) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(buffer, StandardCharsets.UTF_8)) {
+            zos.putNextEntry(new ZipEntry(topDir + "/SKILL.md"));
+            zos.write("skill md".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+        return new ByteArrayInputStream(buffer.toByteArray());
     }
 
     @Test
@@ -203,12 +253,200 @@ class SkillApplicationServiceTest {
                         .isEqualTo(404));
     }
 
+    // ------------------------------------------------------------------
+    // getLatestVersionFileManifest:详情页文件树,现读制品 zip 中央目录
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("latestVersion 为 null 时直接返回空清单,不碰存储")
+    void should_returnEmptyManifest_when_latestVersionIsNull() {
+        List<SkillVersionFile> files = service.getLatestVersionFileManifest(sampleSkill());
+
+        assertThat(files).isEmpty();
+        verifyNoInteractions(artifactStorage);
+    }
+
+    @Test
+    @DisplayName("latestVersion 存在但 artifactKey 为空时返回空清单,不碰存储")
+    void should_returnEmptyManifest_when_artifactKeyIsNull() {
+        List<SkillVersionFile> files = service.getLatestVersionFileManifest(sampleSkillWithLatestVersion(null));
+
+        assertThat(files).isEmpty();
+        verifyNoInteractions(artifactStorage);
+    }
+
+    @Test
+    @DisplayName("制品可读时返回剥壳后的文件清单")
+    void should_returnManifest_when_artifactReadable() throws IOException {
+        when(artifactStorage.openRead(ARTIFACT_KEY)).thenReturn(buildZipStream("code-review"));
+
+        List<SkillVersionFile> files =
+                service.getLatestVersionFileManifest(sampleSkillWithLatestVersion(ARTIFACT_KEY));
+
+        assertThat(files).containsExactly(new SkillVersionFile("SKILL.md", 8L));
+    }
+
+    @Test
+    @DisplayName("制品不存在时降级为空清单,不让详情接口整体失败")
+    void should_returnEmptyManifest_when_artifactMissing() {
+        when(artifactStorage.openRead(ARTIFACT_KEY))
+                .thenThrow(new ResourceNotFoundException("ARTIFACT_NOT_FOUND", "制品不存在, artifactKey=" + ARTIFACT_KEY));
+
+        List<SkillVersionFile> files =
+                service.getLatestVersionFileManifest(sampleSkillWithLatestVersion(ARTIFACT_KEY));
+
+        assertThat(files).isEmpty();
+    }
+
+    @Test
+    @DisplayName("制品不是合法 zip 时降级为空清单,不让详情接口整体失败")
+    void should_returnEmptyManifest_when_artifactIsCorruptZip() {
+        when(artifactStorage.openRead(ARTIFACT_KEY))
+                .thenReturn(new ByteArrayInputStream("不是 zip".getBytes(StandardCharsets.UTF_8)));
+
+        List<SkillVersionFile> files =
+                service.getLatestVersionFileManifest(sampleSkillWithLatestVersion(ARTIFACT_KEY));
+
+        assertThat(files).isEmpty();
+    }
+
     @Test
     @DisplayName("版本列表:skill 不存在时抛出 404,不再去查版本表")
     void should_throwResourceNotFound_when_listingVersionsForMissingSkill() {
         when(skillRepository.existsById(999L)).thenReturn(false);
 
         assertThatThrownBy(() -> service.listVersions(999L)).isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ------------------------------------------------------------------
+    // getVersionFileContent:版本内单个文件的预览内容(backend/CLAUDE.md 8.3 安全用例——正常路径之外的失败用例)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("路径安全且文件存在时返回预览内容,深层嵌套路径(多级目录)同样精确匹配")
+    void should_returnFileContent_when_pathIsSafeAndFileExistsAtNestedPath() throws IOException {
+        String nestedPath = "assets/animations/fx/firework.js";
+        when(skillRepository.findVersionArtifactKey(1L, 10L)).thenReturn(Optional.of(ARTIFACT_KEY));
+        when(artifactStorage.openRead(ARTIFACT_KEY))
+                .thenReturn(buildZipStreamWithFile("code-review", nestedPath, "console.log('boom');"));
+
+        SkillVersionFileContent result = service.getVersionFileContent(1L, 10L, nestedPath);
+
+        assertThat(result.previewable()).isTrue();
+        assertThat(result.path()).isEqualTo(nestedPath);
+        assertThat(result.content()).isEqualTo("console.log('boom');");
+    }
+
+    @Test
+    @DisplayName("path 含 .. 时在到达仓储前就被拒绝,统一表现为 404,不碰存储")
+    void should_throwFileNotFound_when_pathContainsDotDotSegment() {
+        assertThatThrownBy(() -> service.getVersionFileContent(1L, 10L, "../../etc/passwd"))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .satisfies(ex -> assertThat(((ResourceNotFoundException) ex).httpStatus())
+                        .isEqualTo(404));
+        verifyNoInteractions(skillRepository, artifactStorage);
+    }
+
+    @Test
+    @DisplayName("path 是绝对路径时被拒绝,不碰存储")
+    void should_throwFileNotFound_when_pathIsAbsolute() {
+        assertThatThrownBy(() -> service.getVersionFileContent(1L, 10L, "/etc/passwd"))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verifyNoInteractions(skillRepository, artifactStorage);
+    }
+
+    @Test
+    @DisplayName("path 含控制字符时被拒绝,不碰存储")
+    void should_throwFileNotFound_when_pathContainsControlCharacter() {
+        assertThatThrownBy(() -> service.getVersionFileContent(1L, 10L, "references/guide .md"))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verifyNoInteractions(skillRepository, artifactStorage);
+    }
+
+    @Test
+    @DisplayName("versionId 不属于该 skillId 时返回 404,不能用 A 的 skillId 配 B 的 versionId 读到别人的文件")
+    void should_throwVersionNotFound_when_versionDoesNotBelongToSkill() {
+        when(skillRepository.findVersionArtifactKey(1L, 10L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getVersionFileContent(1L, 10L, "SKILL.md"))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verifyNoInteractions(artifactStorage);
+    }
+
+    @Test
+    @DisplayName("请求的路径不在清单里时返回 404")
+    void should_throwFileNotFound_when_pathNotInManifest() throws IOException {
+        when(skillRepository.findVersionArtifactKey(1L, 10L)).thenReturn(Optional.of(ARTIFACT_KEY));
+        when(artifactStorage.openRead(ARTIFACT_KEY)).thenReturn(buildZipStream("code-review"));
+
+        assertThatThrownBy(() -> service.getVersionFileContent(1L, 10L, "not-exist.md"))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("制品缺失时返回 404,而不是让整个请求 500")
+    void should_throwFileNotFound_when_artifactMissing() {
+        when(skillRepository.findVersionArtifactKey(1L, 10L)).thenReturn(Optional.of(ARTIFACT_KEY));
+        when(artifactStorage.openRead(ARTIFACT_KEY))
+                .thenThrow(new ResourceNotFoundException("ARTIFACT_NOT_FOUND", "制品不存在, artifactKey=" + ARTIFACT_KEY));
+
+        assertThatThrownBy(() -> service.getVersionFileContent(1L, 10L, "SKILL.md"))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("制品不是合法 zip 时返回 404,而不是让整个请求 500")
+    void should_throwFileNotFound_when_artifactIsCorruptZip() {
+        when(skillRepository.findVersionArtifactKey(1L, 10L)).thenReturn(Optional.of(ARTIFACT_KEY));
+        when(artifactStorage.openRead(ARTIFACT_KEY))
+                .thenReturn(new ByteArrayInputStream("不是 zip".getBytes(StandardCharsets.UTF_8)));
+
+        assertThatThrownBy(() -> service.getVersionFileContent(1L, 10L, "SKILL.md"))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("超过 256KB 的文件返回 previewable=false,原因是 TOO_LARGE")
+    void should_returnNotPreviewable_when_fileExceedsSizeLimit() throws IOException {
+        byte[] oversized = new byte[(int) SkillVersionFilePreviewer.MAX_PREVIEWABLE_BYTES + 1];
+        when(skillRepository.findVersionArtifactKey(1L, 10L)).thenReturn(Optional.of(ARTIFACT_KEY));
+        when(artifactStorage.openRead(ARTIFACT_KEY))
+                .thenReturn(buildZipStreamWithFile("code-review", "scripts/big.sh", oversized));
+
+        SkillVersionFileContent result = service.getVersionFileContent(1L, 10L, "scripts/big.sh");
+
+        assertThat(result.previewable()).isFalse();
+        assertThat(result.notPreviewableReason()).isEqualTo(NotPreviewableReason.TOO_LARGE);
+    }
+
+    @Test
+    @DisplayName("含 NUL 字节的文件返回 previewable=false,原因是 BINARY,即使扩展名是 .md")
+    void should_returnNotPreviewable_when_fileContainsNulByte() throws IOException {
+        byte[] binaryLikeMd = new byte[] {'a', 'b', 0x00, 'c'};
+        when(skillRepository.findVersionArtifactKey(1L, 10L)).thenReturn(Optional.of(ARTIFACT_KEY));
+        when(artifactStorage.openRead(ARTIFACT_KEY))
+                .thenReturn(buildZipStreamWithFile("code-review", "SKILL.md", binaryLikeMd));
+
+        SkillVersionFileContent result = service.getVersionFileContent(1L, 10L, "SKILL.md");
+
+        assertThat(result.previewable()).isFalse();
+        assertThat(result.notPreviewableReason()).isEqualTo(NotPreviewableReason.BINARY);
+    }
+
+    private ByteArrayInputStream buildZipStreamWithFile(String topDir, String relativePath, String content)
+            throws IOException {
+        return buildZipStreamWithFile(topDir, relativePath, content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private ByteArrayInputStream buildZipStreamWithFile(String topDir, String relativePath, byte[] content)
+            throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(buffer, StandardCharsets.UTF_8)) {
+            zos.putNextEntry(new ZipEntry(topDir + "/" + relativePath));
+            zos.write(content);
+            zos.closeEntry();
+        }
+        return new ByteArrayInputStream(buffer.toByteArray());
     }
 
     @Test

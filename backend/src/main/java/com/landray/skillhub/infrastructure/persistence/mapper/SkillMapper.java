@@ -57,6 +57,9 @@ public interface SkillMapper {
 
     List<SkillVersionRow> selectVersionsBySkillId(@Param("skillId") long skillId);
 
+    /** 见 {@code SkillRepository#findVersionArtifactKey} 类注释:{@code skillId}/{@code versionId} 联合条件。 */
+    String selectVersionArtifactKey(@Param("skillId") long skillId, @Param("versionId") long versionId);
+
     /** 复用 {@code selectDetailById} 同一份 resultMap,只是过滤条件换成 name(precheck 重名检测,业务建模文档 6.2)。 */
     SkillDetailRow selectDetailByName(@Param("name") String name);
 

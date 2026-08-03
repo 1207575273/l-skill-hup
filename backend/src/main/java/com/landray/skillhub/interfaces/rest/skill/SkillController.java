@@ -22,13 +22,14 @@ import com.landray.skillhub.application.upload.NewVersionCommand;
 import com.landray.skillhub.application.upload.PrecheckResult;
 import com.landray.skillhub.application.upload.SkillUploadApplicationService;
 import com.landray.skillhub.domain.model.Skill;
+import com.landray.skillhub.domain.model.SkillVersionFileContent;
 import com.landray.skillhub.interfaces.rest.auth.CurrentUserAccessor;
 import com.landray.skillhub.interfaces.rest.auth.RequireLogin;
 import com.landray.skillhub.shared.model.PageResult;
 
 /**
- * skill 接口:读侧四个匿名可用(业务建模文档 5.16 权限矩阵),写侧(precheck / 发布 / 改元数据 / 上下架)一律
- * {@link RequireLogin},资源级的 owner/ADMIN 判断在 application 层完成(controller 不做业务判断)。
+ * skill 接口:读侧(含版本文件预览)匿名可用(业务建模文档 5.16 权限矩阵),写侧(precheck / 发布 / 改元数据 /
+ * 上下架)一律 {@link RequireLogin},资源级的 owner/ADMIN 判断在 application 层完成(controller 不做业务判断)。
  *
  * <p>薄控制器:只收参、调 application、转 DTO,不写业务判断、不碰 SQL(backend/CLAUDE.md 第一节)。
  */
@@ -67,7 +68,7 @@ public class SkillController {
     @GetMapping("/{id}")
     public SkillDetailResponse getSkill(@PathVariable long id) {
         Skill skill = skillApplicationService.getSkillDetail(id);
-        return SkillDetailResponse.from(skill);
+        return SkillDetailResponse.from(skill, skillApplicationService.getLatestVersionFileManifest(skill));
     }
 
     @GetMapping("/{id}/versions")
@@ -75,6 +76,18 @@ public class SkillController {
         return skillApplicationService.listVersions(id).stream()
                 .map(SkillVersionResponse::from)
                 .toList();
+    }
+
+    /**
+     * 详情页文件树点开某个节点后的内容预览,匿名可用(与 {@link #getSkill} / {@link #getVersions} 同属读侧四个
+     * 匿名可用接口的延伸——查看已发布制品的文件内容不涉及资源级权限判断)。{@code path} 是剥壳后的相对路径,
+     * 由前端直接透传 {@code latestVersion.files[].path} 里的值。
+     */
+    @GetMapping("/{skillId}/versions/{versionId}/file")
+    public SkillVersionFileContentResponse getVersionFileContent(
+            @PathVariable long skillId, @PathVariable long versionId, @RequestParam String path) {
+        SkillVersionFileContent result = skillApplicationService.getVersionFileContent(skillId, versionId, path);
+        return SkillVersionFileContentResponse.from(result);
     }
 
     /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildDirectoryTree, flattenFilesToEntries } from './directoryTree'
+import { buildDirectoryTree, buildTreeFromPaths, flattenFilesToEntries } from './directoryTree'
 import { createDirectoryFile, createFile } from './skillPackageFixtures.test-support'
 
 describe('buildDirectoryTree', () => {
@@ -85,5 +85,42 @@ describe('flattenFilesToEntries', () => {
 
   it('空输入应返回空数组', () => {
     expect(flattenFilesToEntries([])).toEqual([])
+  })
+})
+
+describe('buildTreeFromPaths', () => {
+  it('should_group_files_under_their_directories_when_given_flat_paths', () => {
+    const tree = buildTreeFromPaths([
+      { path: 'SKILL.md', sizeBytes: 100 },
+      { path: 'references/guide.md', sizeBytes: 200 },
+      { path: 'references/deep/inner.md', sizeBytes: 50 },
+      { path: 'scripts/run.sh', sizeBytes: 30 },
+    ])
+
+    // 目录优先、同类型按名称排序,与 buildDirectoryTree 共用同一套排序
+    expect(tree.map((node) => node.name)).toEqual(['references', 'scripts', 'SKILL.md'])
+
+    const references = tree[0]
+    expect(references?.type).toBe('directory')
+    if (references?.type !== 'directory') {
+      throw new Error('references 应当是目录节点')
+    }
+    expect(references.children.map((node) => node.name)).toEqual(['deep', 'guide.md'])
+  })
+
+  it('should_return_empty_array_when_manifest_is_empty', () => {
+    // 存量版本没有清单信息时后端返回 [],这里不该抛异常
+    expect(buildTreeFromPaths([])).toEqual([])
+  })
+
+  it('should_keep_file_size_on_leaf_nodes', () => {
+    const tree = buildTreeFromPaths([{ path: 'a/b.md', sizeBytes: 4096 }])
+
+    const directory = tree[0]
+    if (directory?.type !== 'directory') {
+      throw new Error('a 应当是目录节点')
+    }
+    const file = directory.children[0]
+    expect(file).toEqual({ type: 'file', name: 'b.md', path: 'a/b.md', size: 4096 })
   })
 })

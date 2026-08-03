@@ -2,6 +2,7 @@ import { API_BASE_URL, apiGet, apiPost, apiPostFormData } from './client'
 import type {
   PageResponse,
   SkillDetail,
+  SkillFileContent,
   SkillListFilter,
   SkillPrecheckResult,
   SkillSource,
@@ -52,6 +53,24 @@ export function fetchSkillVersions(
   options?: AbortableOptions,
 ): Promise<SkillVersionSummary[]> {
   return apiGet<SkillVersionSummary[]>(`/skills/${skillId}/versions`, { signal: options?.signal })
+}
+
+/**
+ * `GET /skills/{id}/versions/{versionId}/file?path=...`,匿名可用,详情页文件预览。
+ *
+ * `path` 走 query 参数而不是拼进路径:文件路径里有 `/`,拼进去会被路由当成多级路径段,
+ * 还得两边约定一套转义规则 —— query 参数天然支持任意字符,`apiGet` 会做 URL 编码。
+ */
+export function fetchSkillFileContent(
+  skillId: number,
+  versionId: number,
+  path: string,
+  options?: AbortableOptions,
+): Promise<SkillFileContent> {
+  return apiGet<SkillFileContent>(`/skills/${skillId}/versions/${versionId}/file`, {
+    query: { path },
+    signal: options?.signal,
+  })
 }
 
 /** `POST /skills/precheck`(需登录),上传前即时反馈,不落库。 */

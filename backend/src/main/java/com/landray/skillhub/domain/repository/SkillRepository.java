@@ -36,6 +36,15 @@ public interface SkillRepository {
     List<SkillVersion> findVersionsBySkillId(long skillId);
 
     /**
+     * 版本文件预览接口的唯一输入:某个 skill 的某个具体版本对应的 {@code artifact_key}。
+     *
+     * <p>{@code WHERE id = versionId AND skill_id = skillId} 的联合条件天然保证"versionId 必须真的属于这个
+     * skillId"——不能用 A skill 的 id 配 B skill 的 versionId 读到别人的文件。版本不存在与版本存在但属于另一个
+     * skill 这两种情况统一返回空,不额外区分,避免向调用方泄漏"这个 id 组合是否存在"的信息。
+     */
+    Optional<String> findVersionArtifactKey(long skillId, long versionId);
+
+    /**
      * 按 {@code content_digest} 查是否已有内容完全相同的版本(precheck 的"完全相同的包已存在"判定,业务建模
      * 文档 5.5)。只需要 {@code skillId} / {@code version} 两个字段,其余字段不保证被填充。
      */

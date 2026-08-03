@@ -39,6 +39,27 @@ export function buildDirectoryTree(files: Iterable<File>): DirectoryTreeNode[] {
   return root
 }
 
+/**
+ * 由"路径 + 大小"的扁平清单还原目录树。
+ *
+ * 与 {@link buildDirectoryTree} 的区别只在输入来源:那个吃浏览器的 `File` 对象(上传页选文件夹),
+ * 这个吃后端返回的版本文件清单(详情页展开 skill 的完整形态)。两者共用同一套插入与排序逻辑,
+ * 因此渲染出来的顺序也一致 —— 上传前预览到的结构,和发布后详情页看到的结构不会长得不一样。
+ */
+export function buildTreeFromPaths(
+  entries: readonly { readonly path: string; readonly sizeBytes: number }[],
+): DirectoryTreeNode[] {
+  const root: DirectoryTreeNode[] = []
+
+  for (const entry of entries) {
+    const segments = entry.path.split('/').filter((segment) => segment !== '')
+    insertPath(root, segments, entry.sizeBytes, '')
+  }
+
+  sortTree(root)
+  return root
+}
+
 /** 拍平成校验 / 打包共用的 `PackageEntry[]`,路径取自 `webkitRelativePath`(缺失时退化为文件名)。 */
 export function flattenFilesToEntries(files: Iterable<File>): PackageEntry[] {
   const entries: PackageEntry[] = []

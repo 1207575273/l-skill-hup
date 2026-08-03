@@ -33,12 +33,15 @@ import com.landray.skillhub.application.auth.AuthenticatedUser;
 import com.landray.skillhub.application.upload.PrecheckResult;
 import com.landray.skillhub.application.upload.SkillUploadApplicationService;
 import com.landray.skillhub.domain.model.Certification;
+import com.landray.skillhub.domain.model.NotPreviewableReason;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillName;
 import com.landray.skillhub.domain.model.SkillOwner;
 import com.landray.skillhub.domain.model.SkillSource;
 import com.landray.skillhub.domain.model.SkillStatus;
 import com.landray.skillhub.domain.model.SkillVersion;
+import com.landray.skillhub.domain.model.SkillVersionFile;
+import com.landray.skillhub.domain.model.SkillVersionFileContent;
 import com.landray.skillhub.domain.model.UserRole;
 import com.landray.skillhub.interfaces.rest.auth.AuthenticationInterceptor;
 import com.landray.skillhub.interfaces.rest.auth.CurrentUserAccessor;
@@ -175,6 +178,33 @@ class SkillControllerTest {
     }
 
     @Test
+    @DisplayName("详情接口的 latestVersion.files 来自 application 层现读的文件清单")
+    void should_returnLatestVersionFiles_whenManifestAvailable() throws Exception {
+        when(skillApplicationService.getSkillDetail(1L)).thenReturn(sampleSkill(SkillStatus.PUBLISHED));
+        when(skillApplicationService.getLatestVersionFileManifest(any()))
+                .thenReturn(List.of(
+                        new SkillVersionFile("SKILL.md", 1234L), new SkillVersionFile("references/guide.md", 567L)));
+
+        mockMvc.perform(get("/api/v1/skills/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.latestVersion.files[0].path").value("SKILL.md"))
+                .andExpect(jsonPath("$.latestVersion.files[0].sizeBytes").value(1234))
+                .andExpect(jsonPath("$.latestVersion.files[1].path").value("references/guide.md"));
+    }
+
+    @Test
+    @DisplayName("application 层文件清单为空时,详情接口返回空数组而不是省略字段")
+    void should_returnEmptyFilesArray_whenManifestIsEmpty() throws Exception {
+        when(skillApplicationService.getSkillDetail(1L)).thenReturn(sampleSkill(SkillStatus.PUBLISHED));
+        when(skillApplicationService.getLatestVersionFileManifest(any())).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/skills/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.latestVersion.files").isArray())
+                .andExpect(jsonPath("$.latestVersion.files").isEmpty());
+    }
+
+    @Test
     @DisplayName("已下架的 skill 通过详情接口仍可访问,status 字段如实反映 UNLISTED")
     void should_returnUnlistedStatus_whenDetailIsUnlisted() throws Exception {
         when(skillApplicationService.getSkillDetail(1L)).thenReturn(sampleSkill(SkillStatus.UNLISTED));
@@ -220,6 +250,51 @@ class SkillControllerTest {
         mockMvc.perform(get("/api/v1/skills/999/versions"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("SKILL_NOT_FOUND"));
+    }
+
+    // ------------------------------------------------------------------
+    // 版本文件预览:GET /skills/{skillId}/versions/{versionId}/file
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("文件预览:可预览时返回解码后的正文,query 参数原样透传给 application 层")
+    void should_returnFileContent_whenFilePreviewable() throws Exception {
+        when(skillApplicationService.getVersionFileContent(1L, 10L, "references/guide.md"))
+                .thenReturn(SkillVersionFileContent.previewable("references/guide.md", 5L, "guide"));
+
+        mockMvc.perform(get("/api/v1/skills/1/versions/10/file").param("path", "references/guide.md"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.path").value("references/guide.md"))
+                .andExpect(jsonPath("$.sizeBytes").value(5))
+                .andExpect(jsonPath("$.previewable").value(true))
+                .andExpect(jsonPath("$.content").value("guide"))
+                .andExpect(jsonPath("$.notPreviewableReason").doesNotExist());
+
+        verify(skillApplicationService).getVersionFileContent(1L, 10L, "references/guide.md");
+    }
+
+    @Test
+    @DisplayName("文件预览:不可预览时 content 为空,notPreviewableReason 携带原因")
+    void should_returnNotPreviewable_whenFileIsBinary() throws Exception {
+        when(skillApplicationService.getVersionFileContent(1L, 10L, "assets/logo.png"))
+                .thenReturn(SkillVersionFileContent.notPreviewable("assets/logo.png", 2048L, NotPreviewableReason.BINARY));
+
+        mockMvc.perform(get("/api/v1/skills/1/versions/10/file").param("path", "assets/logo.png"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.previewable").value(false))
+                .andExpect(jsonPath("$.content").doesNotExist())
+                .andExpect(jsonPath("$.notPreviewableReason").value("BINARY"));
+    }
+
+    @Test
+    @DisplayName("文件预览:application 层因文件不存在抛出 404 时原样透传")
+    void should_return404_whenVersionFileNotFound() throws Exception {
+        when(skillApplicationService.getVersionFileContent(anyLong(), anyLong(), any()))
+                .thenThrow(new ResourceNotFoundException("SKILL_VERSION_FILE_NOT_FOUND", "文件不存在, skillId=1, versionId=10"));
+
+        mockMvc.perform(get("/api/v1/skills/1/versions/10/file").param("path", "not-exist.md"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("SKILL_VERSION_FILE_NOT_FOUND"));
     }
 
     // ------------------------------------------------------------------
