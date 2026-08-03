@@ -1,6 +1,7 @@
 package com.landray.skillhub.domain.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayOutputStream;
@@ -334,36 +335,30 @@ class SkillPackageValidatorTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("缺少 SKILL.md 时拒绝")
-    void should_reject_when_skillMdMissing() throws IOException {
-        byte[] zip = buildZip(Map.of("README.md", "只有说明,没有 SKILL.md"));
-
-        assertThatThrownBy(() -> validator.parseAndValidate(zip))
-                .isInstanceOf(SkillPackageInvalidException.class)
-                .satisfies(ex -> assertThat(((SkillPackageInvalidException) ex).code())
-                        .isEqualTo("SKILL_PACKAGE_STRUCTURE_INVALID"));
-    }
-
-    @Test
-    @DisplayName("顶层出现白名单之外的文件时拒绝")
-    void should_reject_when_topLevelFileNotWhitelisted() throws IOException {
+    @DisplayName("真实 skill 常见的顶层文件与目录一律放行,不做白名单")
+    void should_accept_when_packageHasArbitraryTopLevelEntries() throws IOException {
+        // 这些条目照抄自 GitHub 上一个真实 skill 包的目录。它们曾被顶层白名单全部拒掉,
+        // 而官方规范只要求 SKILL.md 存在,其余是任意 supporting files ——
+        // 官方文档的示例目录本身就把 FORMS.md / reference.md 直接摆在顶层。
         Map<String, String> entries = new LinkedHashMap<>();
         entries.put("SKILL.md", skillMd("foo", "描述", null));
         entries.put("LICENSE", "MIT");
+        entries.put("README.zh-CN.md", "# 中文说明");
+        entries.put("docs/readme/hero.png", "假装是图片");
+        entries.put("templates/deck.html", "<html></html>");
+        entries.put("examples/demo/index.html", "<html></html>");
+        entries.put(".clawscan-allow", "x");
         byte[] zip = buildZip(entries);
 
-        assertThatThrownBy(() -> validator.parseAndValidate(zip))
-                .isInstanceOf(SkillPackageInvalidException.class)
-                .satisfies(ex -> assertThat(((SkillPackageInvalidException) ex).code())
-                        .isEqualTo("SKILL_PACKAGE_STRUCTURE_INVALID"));
+        assertThatCode(() -> validator.parseAndValidate(zip)).doesNotThrowAnyException();
     }
 
     @Test
-    @DisplayName("顶层出现白名单之外的目录时拒绝")
-    void should_reject_when_topLevelDirectoryNotWhitelisted() throws IOException {
+    @DisplayName("缺少顶层 SKILL.md 时仍然拒绝——这是唯一的结构要求")
+    void should_reject_when_skillMdMissing() throws IOException {
         Map<String, String> entries = new LinkedHashMap<>();
-        entries.put("SKILL.md", skillMd("foo", "描述", null));
-        entries.put("images/pic.png", "二进制假装的图片内容");
+        entries.put("README.md", "# 只有说明没有 SKILL.md");
+        entries.put("scripts/run.sh", "echo hi");
         byte[] zip = buildZip(entries);
 
         assertThatThrownBy(() -> validator.parseAndValidate(zip))
@@ -462,15 +457,25 @@ class SkillPackageValidatorTest {
     }
 
     @Test
-    @DisplayName("description 超过 512 字符时拒绝——与 skill.description 列宽一致")
-    void should_reject_when_descriptionExceeds512Chars() throws IOException {
-        String longDescription = "字".repeat(513);
+    @DisplayName("description 超过 1024 字符时拒绝——上限取自 Agent Skills 官方规范")
+    void should_reject_when_descriptionExceedsSpecLimit() throws IOException {
+        String longDescription = "字".repeat(1025);
         byte[] zip = buildZip(Map.of("SKILL.md", skillMd("foo", longDescription, null)));
 
         assertThatThrownBy(() -> validator.parseAndValidate(zip))
                 .isInstanceOf(SkillPackageInvalidException.class)
                 .satisfies(ex -> assertThat(((SkillPackageInvalidException) ex).code())
                         .isEqualTo("SKILL_PACKAGE_FRONTMATTER_INVALID"));
+    }
+
+    @Test
+    @DisplayName("description 在 512 与 1024 之间时放行——曾被旧的 512 上限误拒")
+    void should_accept_when_descriptionBetweenOldAndSpecLimit() throws IOException {
+        // 实测拖进来的真实 skill 是 616 字符,正落在这个区间里。
+        String description = "字".repeat(616);
+        byte[] zip = buildZip(Map.of("SKILL.md", skillMd("foo", description, null)));
+
+        assertThatCode(() -> validator.parseAndValidate(zip)).doesNotThrowAnyException();
     }
 
     @Test

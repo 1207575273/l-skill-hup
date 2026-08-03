@@ -77,7 +77,14 @@ public final class SkillPackageValidator {
     private static final int MAX_RAW_NAME_LENGTH = 50;
 
     /** 与 skill.description 列宽(VARCHAR(512))一致,业务建模文档 4.8。 */
-    private static final int MAX_DESCRIPTION_LENGTH = 512;
+    /**
+     * Agent Skills 官方规范:{@code description} 非空、最多 1024 字符。
+     *
+     * <p>曾经写死 512,依据是数据库列宽 {@code VARCHAR(512)} —— 那是把存储实现当成了业务规则。
+     * 实测真实 skill 的 description 轻易超过 512(报过 616 的),按 512 卡等于拒收合规包。
+     * 列宽已由 V0003 放宽到 1024 与规范对齐。
+     */
+    private static final int MAX_DESCRIPTION_LENGTH = 1024;
 
     /** frontmatter YAML 块的字符数上限,防 YAML 炸弹(billion-laughs 之类的别名展开攻击)——防御性设置,
      * 正常 frontmatter 远小于这个数。SnakeYAML 2.x 的 {@link LoaderOptions} 默认值本身已经比较安全
@@ -87,8 +94,6 @@ public final class SkillPackageValidator {
 
     private static final Set<String> JUNK_SEGMENTS = Set.of("__MACOSX", ".git", "node_modules");
     private static final Set<String> JUNK_FILE_NAMES = Set.of(".DS_Store", "Thumbs.db");
-    private static final Set<String> ALLOWED_TOP_FILES = Set.of("SKILL.md", "README.md");
-    private static final Set<String> ALLOWED_TOP_DIRS = Set.of("references", "scripts", "assets");
 
     private static final String SKILL_MD = "SKILL.md";
     private static final String README_MD = "README.md";
@@ -304,24 +309,35 @@ public final class SkillPackageValidator {
     }
 
     // ------------------------------------------------------------------
-    // 步骤 5:结构校验——必须有 SKILL.md;顶层只允许 SKILL.md / README.md / references|scripts|assets/
+    // 步骤 5:结构校验——只要求顶层有 SKILL.md,其余文件与目录随便叫什么
     // 目录深度基准:剥壳之后的相对路径,以路径分隔符个数为准
     // ------------------------------------------------------------------
 
+    /**
+     * <b>刻意不做顶层白名单。</b>曾经这里只放行 {@code SKILL.md / README.md / references|scripts|assets/},
+     * 结果是真实世界的 skill 几乎全被拒:GitHub 上的包普遍带 {@code LICENSE}、{@code README.zh-CN.md}、
+     * {@code docs/}、{@code templates/}、{@code examples/}。
+     *
+     * <p>去掉它有两条理由:
+     *
+     * <ol>
+     *   <li><b>官方规范里没有这条约束。</b>Agent Skills 只要求 {@code SKILL.md} 存在,其余是任意
+     *       supporting files —— 官方文档给的目录示例本身就把 {@code FORMS.md} / {@code reference.md} /
+     *       {@code examples.md} 直接摆在顶层,目录还叫 {@code reference/} 而不是 {@code references/}。
+     *       我们按一个更窄的解读去卡,卡掉的是合规的包。
+     *   <li><b>它挡不住任何攻击,所以不是安全边界。</b>攻击者把恶意脚本放进 {@code scripts/} 就能绕过,
+     *       白名单一个字都不用改。真正的安全边界是 zip-slip(见 {@code assessEntryPath})、解压上限、
+     *       符号链接拒绝 —— 那三条与顶层条目叫什么名字完全无关。
+     * </ol>
+     *
+     * <p>换句话说,这条规则的全部收益是"包看起来整洁",代价是平台装不了真实的 skill。而流通性正是这个
+     * 平台唯一的价值,所以这笔交易怎么算都不划算。
+     */
     private void validateStructure(Map<String, byte[]> canonical) {
         if (!canonical.containsKey(SKILL_MD)) {
             throw invalid(CODE_STRUCTURE_INVALID, "包内缺少顶层 SKILL.md");
         }
         for (String path : canonical.keySet()) {
-            String[] segments = path.split("/");
-            String topSegment = segments[0];
-            boolean isAllowedTopFile = segments.length == 1 && ALLOWED_TOP_FILES.contains(topSegment);
-            boolean isNestedUnderAllowedDir = segments.length > 1 && ALLOWED_TOP_DIRS.contains(topSegment);
-            if (!isAllowedTopFile && !isNestedUnderAllowedDir) {
-                throw invalid(
-                        CODE_STRUCTURE_INVALID,
-                        "顶层只允许 SKILL.md / README.md / references|scripts|assets 目录,不合规条目: " + path);
-            }
             int depth = countSlashes(path);
             if (depth > limits.maxPathDepth()) {
                 throw invalid(CODE_PATH_TOO_DEEP, "目录深度超过上限 " + limits.maxPathDepth() + ": " + path);

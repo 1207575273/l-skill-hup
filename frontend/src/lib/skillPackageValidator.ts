@@ -22,8 +22,21 @@ import type {
 
 const SKILL_MD_FILE_NAME = 'SKILL.md'
 const README_FILE_NAME = 'README.md'
-const ALLOWED_TOP_LEVEL_DIRECTORIES = new Set(['references', 'scripts', 'assets'])
-const ALLOWED_TOP_LEVEL_FILES = new Set([SKILL_MD_FILE_NAME, README_FILE_NAME])
+
+/*
+ * 这里刻意没有顶层白名单。
+ *
+ * 曾经只放行 SKILL.md / README.md / references|scripts|assets/,结果真实世界的 skill 几乎全被拒 ——
+ * GitHub 上的包普遍带 LICENSE、README.zh-CN.md、docs/、templates/、examples/。
+ *
+ * 官方规范里没有这条约束:Agent Skills 只要求 SKILL.md 存在,其余是任意 supporting files,
+ * 官方文档的目录示例本身就把 FORMS.md / reference.md / examples.md 直接摆在顶层,
+ * 目录还叫 reference/ 而不是 references/。
+ *
+ * 而且它挡不住任何攻击 —— 恶意脚本放进 scripts/ 就能绕过,白名单一个字都不用改。真正的安全边界是
+ * assessPackagePath 里的 zip-slip 判断、解压上限、符号链接拒绝,那三条与顶层条目叫什么名字无关。
+ * 收益只有"包看起来整洁",代价是平台装不了真实 skill,不划算。
+ */
 
 /**
  * 常见操作系统 / 工具垃圾文件,一律静默剔除,不计入任何校验。
@@ -95,16 +108,6 @@ export async function validateSkillPackage(
     const segments = relativePath.split('/')
     const topLevelName = segments[0] ?? ''
     const isTopLevelFile = segments.length === 1
-    const topLevelAllowed = isTopLevelFile
-      ? ALLOWED_TOP_LEVEL_FILES.has(topLevelName)
-      : ALLOWED_TOP_LEVEL_DIRECTORIES.has(topLevelName)
-    if (!topLevelAllowed) {
-      violations.push({
-        code: 'TOP_LEVEL_NOT_ALLOWED',
-        message: `顶层条目 ${topLevelName} 不在白名单(SKILL.md / README.md / references/ / scripts/ / assets/)内`,
-        path: entry.path,
-      })
-    }
 
     if (isTopLevelFile && topLevelName === SKILL_MD_FILE_NAME) {
       hasSkillMd = true

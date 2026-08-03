@@ -19,8 +19,14 @@ import type {
   SkillFrontmatterData,
 } from './skillPackageTypes'
 
-/** description 上限。业务建模 4.8:`skill.description` 收紧为 `VARCHAR(512)`,超长在校验阶段拒绝。 */
-export const SKILL_DESCRIPTION_MAX_LENGTH = 512
+/**
+ * description 上限,取自 Agent Skills 官方规范:非空、**最多 1024 字符**。
+ *
+ * 曾经写死 512,依据是数据库列宽 `VARCHAR(512)` —— 那是把存储实现当成了业务规则,方向反了。
+ * 实测真实 skill 的 description 轻易超过 512(遇到过 616 的),按 512 卡等于拒收合规包。
+ * 列宽已由后端 V0003 迁移放宽到 1024 与规范对齐。
+ */
+export const SKILL_DESCRIPTION_MAX_LENGTH = 1024
 
 const FRONTMATTER_DELIMITER = '---'
 

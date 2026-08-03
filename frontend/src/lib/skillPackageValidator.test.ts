@@ -91,16 +91,23 @@ describe('validateSkillPackage — 结构违规', () => {
     expect(report.violations.some((v) => v.code === 'SKILL_MD_MISSING')).toBe(true)
   })
 
-  it('不在白名单内的顶层目录应报 TOP_LEVEL_NOT_ALLOWED', async () => {
+  it('真实 skill 常见的顶层文件与目录应当放行', async () => {
+    // 这些条目取自 GitHub 上一个真实的 skill 包。它们曾被顶层白名单全部拒掉,
+    // 而官方规范只要求 SKILL.md 存在,其余是任意 supporting files。
     const entries = [
       createTextEntry('demo-skill/SKILL.md', validSkillMd()),
-      createTextEntry('demo-skill/node-junk/x.md', 'x'),
+      createTextEntry('demo-skill/LICENSE', 'MIT'),
+      createTextEntry('demo-skill/README.zh-CN.md', '# 中文说明'),
+      createTextEntry('demo-skill/docs/readme/hero.png', 'x'),
+      createTextEntry('demo-skill/templates/deck.html', '<html></html>'),
+      createTextEntry('demo-skill/examples/demo/index.html', '<html></html>'),
+      createTextEntry('demo-skill/.clawscan-allow', 'x'),
     ]
 
     const report = await validateSkillPackage(entries)
 
-    expect(report.valid).toBe(false)
-    expect(report.violations.some((v) => v.code === 'TOP_LEVEL_NOT_ALLOWED')).toBe(true)
+    expect(report.valid).toBe(true)
+    expect(report.violations).toHaveLength(0)
   })
 
   it('路径穿越条目应报 PATH_TRAVERSAL(整合 skillPackagePath 的判断)', async () => {
