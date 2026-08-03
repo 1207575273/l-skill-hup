@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  面向下载与安装脚本渲染的窄查询。单一事实源:docs/20260802224934_业务建模与接口契约.md 5.9 与 5.12。
+
+  skill_status / certification 两列在 SkillArtifactRow 里直接声明为领域枚举类型,值域与枚举常量名精确一致
+  (PUBLISHED/UNLISTED、NONE/CERTIFIED/REVOKED),MyBatis 默认 EnumTypeHandler 可直接工作,resultType
+  自动映射即可,不需要像 InstallBundleMapper 那样手写 resultMap。
+-->
+<mapper namespace="com.landray.skillhub.infrastructure.persistence.mapper.SkillArtifactMapper">
+
+    <sql id="artifactColumns">
+        sv.id                   AS skill_version_id,
+        sv.skill_id             AS skill_id,
+        s.name                  AS skill_name,
+        sv.version              AS version,
+        sv.artifact_key         AS artifact_key,
+        sv.sha256                AS sha256,
+        sv.size_bytes            AS size_bytes,
+        s.status                 AS skill_status,
+        sv.certification         AS certification,
+        sv.certify_note          AS certify_note
+    </sql>
+
+    <select id="selectBySkillIdAndVersion"
+            resultType="com.landray.skillhub.infrastructure.persistence.po.SkillArtifactRow">
+        SELECT <include refid="artifactColumns"/>
+        FROM skill_version sv
+        JOIN skill s ON s.id = sv.skill_id
+        WHERE sv.skill_id = #{skillId} AND sv.version = #{version}
+    </select>
+
+    <select id="selectByVersionIds"
+            resultType="com.landray.skillhub.infrastructure.persistence.po.SkillArtifactRow">
+        SELECT <include refid="artifactColumns"/>
+        FROM skill_version sv
+        JOIN skill s ON s.id = sv.skill_id
+        WHERE sv.id IN
+        <foreach item="versionId" collection="versionIds" open="(" separator="," close=")">
+            #{versionId}
+        </foreach>
+    </select>
+
+    <update id="incrementDownloadCount">
+        UPDATE skill SET download_count = download_count + 1 WHERE id = #{skillId}
+    </update>
+
+</mapper>

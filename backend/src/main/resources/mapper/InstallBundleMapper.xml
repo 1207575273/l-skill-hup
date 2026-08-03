@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  install_bundle 的读写查询。单一事实源:docs/20260802224934_业务建模与接口契约.md 4.13 与 6.3。
+
+  items 列(JSONB)与 client/scope 列(数据库存小写字符串)都需要手写处理,理由分别见
+  InstallItemsTypeHandler 与 InstallBundleRow 的类注释,这里只在具体列上显式声明 typeHandler,
+  不做全局类型注册——同 SkillMapper.xml 里 StringArrayTypeHandler 的用法保持一致的风格。
+-->
+<mapper namespace="com.landray.skillhub.infrastructure.persistence.mapper.InstallBundleMapper">
+
+    <!--
+        insert 用 Map 而不是直接传领域对象:useGeneratedKeys 需要把生成的 id 写回参数对象,
+        而 InstallBundle 是不可变 record(没有 setter),写不回去会抛 ReflectionException。
+        与 AppUserMapper/UserSessionMapper 的既有写法保持一致。
+    -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id" parameterType="map">
+        INSERT INTO install_bundle (token, items, client, scope, created_by_user_id, expires_at)
+        VALUES (
+            #{token},
+            #{items, typeHandler=com.landray.skillhub.infrastructure.persistence.typehandler.InstallItemsTypeHandler},
+            #{client},
+            #{scope},
+            #{createdByUserId},
+            #{expiresAt}
+        )
+    </insert>
+
+    <resultMap id="installBundleRowResultMap"
+               type="com.landray.skillhub.infrastructure.persistence.po.InstallBundleRow">
+        <constructor>
+            <idArg column="id" javaType="java.lang.Long"/>
+            <arg column="token" javaType="java.lang.String"/>
+            <arg column="items" javaType="java.util.List"
+                 typeHandler="com.landray.skillhub.infrastructure.persistence.typehandler.InstallItemsTypeHandler"/>
+            <arg column="client" javaType="java.lang.String"/>
+            <arg column="scope" javaType="java.lang.String"/>
+            <arg column="created_by_user_id" javaType="java.lang.Long"/>
+            <arg column="created_at" javaType="java.time.Instant"/>
+            <arg column="expires_at" javaType="java.time.Instant"/>
+        </constructor>
+    </resultMap>
+
+    <select id="selectByToken" resultMap="installBundleRowResultMap">
+        SELECT id, token, items, client, scope, created_by_user_id, created_at, expires_at
+        FROM install_bundle
+        WHERE token = #{token}
+    </select>
+
+    <delete id="deleteExpiredBefore">
+        DELETE FROM install_bundle WHERE expires_at &lt; #{threshold}
+    </delete>
+
+</mapper>
