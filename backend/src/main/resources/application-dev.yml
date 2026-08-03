@@ -67,7 +67,23 @@ skillhub:
   storage:
     # P0 用本地文件夹实现 ArtifactStorage,业务代码只认接口
     type: local
-    local-root: ${ARTIFACT_ROOT:./data/artifacts}
+
+    # **默认值必须是绝对路径,不许再用 ./xxx。**
+    #
+    # 上一版写的是 `./data/artifacts`,相对路径按 JVM 的当前工作目录解析,于是同一份配置在三种启动方式下
+    # 指向三个不同的目录:`cd backend && mvn spring-boot:run` -> backend/data/artifacts;IDEA 按模块根或
+    # 项目根启动 -> 另外两个位置。踩到的实况是:制品全部读不到,而界面上只表现为详情页文件树空着
+    # (读不到被降级成"清单为空"),跟"这个包本来就没文件"长得一模一样。
+    #
+    # `skillhub.project-home` 由 ProjectHomeEnvironmentPostProcessor 从**代码位置**推出模块根(向上找
+    # pom.xml),与工作目录无关。所以 IDEA / 命令行 / 仓库根三种启法都落在同一个 backend/data/artifacts。
+    #
+    # 中间曾短暂改成 ${user.home}/.skillhub,那样确实解决了漂移,但把项目数据堆进用户配置目录,
+    # 既不好找也和项目本身脱节,已换掉。
+    #
+    # prod 不做同样改动:那边 ARTIFACT_ROOT 无默认值、必须显式给绝对路径(compose 里是 /app/data/artifacts
+    # 加命名卷),而且容器的 WORKDIR 固定,不存在"从哪启动"这个变量。
+    local-root: ${ARTIFACT_ROOT:${skillhub.project-home}/data/artifacts}
 
   # 上传管线的解包上限(业务建模文档 5.2)。**必须在解压过程中实时生效**,不能解压完再查——
   # 一个 32MB 的包(multipart 上限见 spring.servlet.multipart,与这里无关)可以解压出几十 GB。
@@ -81,9 +97,14 @@ skillhub:
     max-compression-ratio: 100 # 正常文本压缩比在 3~10:1,超过 100:1 判定为 zip 炸弹
 
   auth:
-    # P0 默认关闭自助注册:内网谁都能访问页面,开着意味着任何人都能注册后上传恶意 skill
-    # (业务建模文档 3.2)。dev 同样默认关闭,要联调注册流程时手动打开。
-    local-register-enabled: ${LOCAL_REGISTER_ENABLED:false}
+    # dev 默认**开启**自助注册,与 prod 刻意相反(prod 见 application-prod.yml)。
+    #
+    # 业务建模文档 3.2 关闭它的理由是"内网谁都能访问页面,任何人都能注册后上传恶意 skill",
+    # 那条风险的前提是"谁都能访问",而 dev 只有本机自己能访问,前提不成立。反过来关着的代价是
+    # 每次想验注册流程都得先记起有这么个环境变量 —— 登录页的注册入口直接消失,看起来像功能没做,
+    # 而不是像被关掉了。这与本文件给 bootstrap-admin 配默认密码是同一条取舍:dev 开箱即用,
+    # prod 一律从严。
+    local-register-enabled: ${LOCAL_REGISTER_ENABLED:true}
     bootstrap-admin:
       login: ${BOOTSTRAP_ADMIN_LOGIN:admin}
       # dev 给一个开箱即用的默认密码,方便本机启动;prod 绝不允许有默认值(见 application-prod.yml)。
@@ -117,7 +138,10 @@ logging:
     console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faded} %clr(%5p) %clr([%X{traceId:-------------}]){magenta} %clr([%12.12t]){faded} %clr(%-44.44logger{43}){cyan} %clr(:){faded} %m%n%wEx"
 
   file:
-    name: ${LOG_ROOT:./logs}/skill-hub.jsonl
+    # 同 skillhub.storage.local-root 的理由:相对路径会让日志跟着启动方式散落到不同目录。
+    # 实际吃过亏——排查制品读不到时,应用的日志写在仓库根、我在 backend/logs 里翻,两边对不上,
+    # 白绕了一圈。日志是排障的起点,它自己的位置最不该是个变量。
+    name: ${LOG_ROOT:${skillhub.project-home}/logs}/skill-hub.jsonl
 
   structured:
     format:

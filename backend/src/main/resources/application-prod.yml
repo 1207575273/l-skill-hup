@@ -82,6 +82,11 @@ skillhub:
     max-compression-ratio: 100
 
   auth:
+    # 保持关闭,与 dev 刻意相反(dev 默认开,理由见 application-dev.yml)。
+    #
+    # 内网谁都能访问页面,开着意味着任何人都能注册 -> 上传结构合规但正文恶意的 skill ->
+    # 被别人装进 Claude Code 执行。P0 认证机制还没上,没有任何一道防线覆盖内容语义
+    # (业务建模文档 3.2)。要开就显式设 LOCAL_REGISTER_ENABLED=true,让它是一个有人负责的决定。
     local-register-enabled: ${LOCAL_REGISTER_ENABLED:false}
     bootstrap-admin:
       login: ${BOOTSTRAP_ADMIN_LOGIN:admin}
@@ -133,8 +138,8 @@ logging:
     rollingpolicy:
       file-name-pattern: ${LOG_ROOT:./logs}/skill-hub.%d{yyyy-MM-dd}.%i.jsonl.gz
       max-file-size: 100MB
-      # 保留 30 天且总量不超过 3GB,两个条件谁先触发谁生效 ——
+      # 保留 7 天且总量不超过 1GB,两个条件谁先触发谁生效 ——
       # 只设天数挡不住某天被刷爆磁盘,只设总量又可能刚出问题就被滚掉。
-      max-history: 30
-      total-size-cap: 3GB
+      max-history: 7
+      total-size-cap: 1GB
       clean-history-on-start: true
