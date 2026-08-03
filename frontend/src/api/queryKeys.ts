@@ -1,4 +1,4 @@
-import type { SkillListFilter, TagKind } from './types'
+import type { SkillListFilter, TagKind, UserListFilter } from './types'
 
 /**
  * TanStack Query 查询键(query key)命名约定。
@@ -43,4 +43,11 @@ export const authKeys = {
   me: ['auth', 'me'] as const,
   providers: ['auth', 'providers'] as const,
   identities: ['identities'] as const,
+}
+
+export const userKeys = {
+  /** `GET /users`,ADMIN 专属(`UserController`)。 */
+  all: ['users'] as const,
+  lists: () => [...userKeys.all, 'list'] as const,
+  list: (filter: UserListFilter) => [...userKeys.lists(), filter] as const,
 }

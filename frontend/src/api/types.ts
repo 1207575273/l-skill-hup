@@ -1,24 +1,27 @@
 /**
  * 后端 DTO 的 TS 类型定义 —— 单一事实源。
  *
- * P0 阶段手写,依据 docs/20260802224934_业务建模与接口契约.md(第四章表结构、
- * 第六章接口契约、第七章前端展示约定)。**契约变了先改这里**,让 tsc 把所有受影响
- * 的地方报出来,不要散落到各个调用点各写一份。
+ * 逐个对照 `backend/src/main/java/com/landray/skillhub/interfaces/rest/**` 下的 Controller 与
+ * Request/Response record 手写(20 个端点、24 个 DTO 全部读过源码,不是看文档推断)。**契约变了先改
+ * 这里**,让 tsc 把所有受影响的地方报出来,不要散落到各个调用点各写一份。
  *
- * 将来由 `openapi-typescript` 从后端导出的 `openapi.json` 生成 `schema.d.ts` 替换
- * 本文件(依据契约文档 8.3)。生成的类型是参考答案不是圣旨:不要求一次性全量替换,
- * 哪个接口的 DTO 复杂就换成生成的,简单的继续手写。集中放在这一个文件,就是为了
- * 将来能一次性替换 —— 散落各处就换不掉了。
+ * 将来由 `openapi-typescript` 从后端导出的 `openapi.json` 生成 `schema.d.ts` 替换本文件。生成的类型
+ * 是参考答案不是圣旨:不要求一次性全量替换,哪个接口的 DTO 复杂就换成生成的,简单的继续手写。集中放在
+ * 这一个文件,就是为了将来能一次性替换 —— 散落各处就换不掉了。
  *
- * 字段一律 camelCase:后端错误响应体示例(契约 6.1)与 precheck 响应示例(6.2)
- * 都是 camelCase,本文件的其余 DTO 按同一约定推断,并非全部有后端 JSON 例证,
- * 具体差异见本次任务报告。
+ * 字段一律 camelCase(Spring Boot 4 的 Jackson 3 默认按 record accessor 名序列化,未额外配置
+ * `@JsonProperty`)。**可空性如实反映 Java 侧的装箱类型 / 校验注解**:`long`/`int`/`boolean` 原始类型
+ * 永不为空;`Long`/`Integer`/`Boolean`/`String` 装箱类型只要没有 `@NotNull`/`@NotBlank` 兜底,就按可空
+ * 处理。与本文件上一版(P0 手写推断版)相比的具体差异清单见本次任务报告,不在这里重复。
  */
 
 // ==================== 通用 ====================
 
 /**
- * 分页响应体(契约 6.1)。`page` 从 1 开始,`size` 默认 20、上限 100。
+ * 分页响应体。对应 `PagedResponse<T>`(`interfaces/rest/PagedResponse.java`)与
+ * `SkillController#listSkills` 直接返回的 `PageResult<T>`(`shared/model/PageResult.java`)——
+ * 两者序列化结构完全一致,前端不需要区分。`page` 从 1 开始,`size` 默认 20、上限 100
+ * (`SkillApplicationService` / `UserController` 里的 `DEFAULT_SIZE` / `MAX_SIZE`)。
  */
 export interface PageResponse<T> {
   readonly items: T[]
@@ -33,146 +36,253 @@ export interface PageQuery {
 }
 
 /**
- * 错误响应体(契约 6.1)。`traceId` 必填 —— 这是排障第一入口,不许被吞掉。
+ * 错误响应体,对应 `ErrorResponse.java`。`traceId` 必填 —— 这是排障第一入口,不许被吞掉。
  * `code` 是稳定的机器可读枚举,前端据此分支;`message` 面向人,不能拿它做逻辑判断。
+ * `details` 是 `Map<String, Object>`,`@JsonInclude(NON_NULL)` 意味着为空时整个字段不出现在 JSON 里。
  */
 export interface ApiErrorBody {
   readonly code: string
   readonly message: string
   readonly traceId: string
-  readonly details?: unknown
+  readonly details?: Record<string, unknown>
 }
 
-// ==================== 枚举(与数据库枚举列一一对应) ====================
+// ==================== 枚举(与后端 domain.model 的 Java 枚举一一对应) ====================
 
-/** skill 来源,单选互斥(建模 3.5)。 */
+/** `SkillSource`(`skill.source`)。序列化用 `.name()`,大小写敏感,后端解析时不区分大小写。 */
 export type SkillSource = 'INTERNAL' | 'COMMUNITY'
 
-/** skill 上下架状态。UNLISTED 不物理删除(建模 4.8)。 */
+/** `SkillStatus`(`skill.status`)。UNLISTED 不物理删除,详情/安装单仍可直达。 */
 export type SkillStatus = 'PUBLISHED' | 'UNLISTED'
 
-/** 认证三态,挂在版本上不挂在 skill 上(建模 3.6)。 */
+/** `Certification`(挂在版本上,不挂在 skill 上)。 */
 export type CertificationStatus = 'NONE' | 'CERTIFIED' | 'REVOKED'
 
-/** 标签类型:CURATED 导航分类(ADMIN 维护),FREE 自由标签(建模 3.5)。 */
+/** `TagKind`(`tag.kind`)。CURATED 由 ADMIN 维护、每个 skill 必须 1~3 个;FREE 自由标签,至多 10 个。 */
 export type TagKind = 'CURATED' | 'FREE'
 
+/** `UserRole`(`app_user.role`)。只有两级,不做 RBAC。 */
 export type UserRole = 'USER' | 'ADMIN'
 
+/** `AppUserStatus`(`app_user.status`)。P0 不会产生 MERGED 的数据,但枚举值先建全。 */
+export type AppUserStatus = 'ACTIVE' | 'DISABLED' | 'MERGED'
+
+/** `IdentityProvider`(`user_identity.provider`)。P0 只启用 LOCAL,DINGTALK 排 P1。 */
 export type AuthProviderCode = 'LOCAL' | 'DINGTALK'
 
-export type ReactionType = 'LIKE' | 'DISLIKE'
-
 /**
- * 已实测的目标客户端(建模 5.9)。这是代码里的枚举,不是自由字符串 ——
- * 未在 `GET /clients` 返回的组合,服务端会拒绝生成安装单。
+ * `ClientCode.apiCode()`(`domain/model/ClientCode.java`)。**注意大小写**:接口与数据库里是小写字符串
+ * (`claude`/`codex`/`workbuddy`),不是 Java 枚举常量名的大写形式。未在 `GET /clients` 返回的组合,
+ * 服务端会拒绝生成安装单。
  */
 export type ClientCode = 'claude' | 'codex' | 'workbuddy'
 
-/** 安装级别:global 落 `~/.<client>/skills/`,project 落 `<当前目录>/.<client>/skills/`。 */
+/** `InstallScope.apiCode()`。global 落 `$HOME/<skillsSubDir>`,project 落当前工作目录下 `<skillsSubDir>`。 */
 export type ScopeCode = 'global' | 'project'
 
-// ==================== 归属人 ====================
+/** `SkillSortOption`,`GET /skills` 的 `sort` 参数值,大小写不敏感,留空按 `latest` 处理。 */
+export type SkillSortOption = 'downloads' | 'likes' | 'latest'
+
+// ==================== 归属人与用户(auth / users / identities) ====================
 
 /**
- * 卡片底部展示为 `@展示名(工号)`(展示约定 7.1)。工号为空时只显示展示名。
+ * skill 归属人展示信息,对应 `SkillOwnerResponse.java`。
+ *
+ * **字段名是 `userId`,不是 `id`**——这是本次核对发现的一处真实差异,P0 手写版当初猜成了 `id`。
+ * `SkillOwnerResponse.from(owner)` 在 `owner` 为 `null` 时整体返回 `null`,因此嵌它的字段都必须是
+ * `SkillOwner | null`,不能假设归属人恒存在。
+ */
+export interface SkillOwner {
+  readonly userId: number
+  readonly displayName: string
+  readonly employeeNo: string | null
+}
+
+/** `GET /identities` 与 `GET /auth/me` 里的一条身份,对应 `IdentitySummaryResponse.java`。 */
+export interface IdentitySummary {
+  readonly id: number
+  readonly provider: AuthProviderCode
+  /** LOCAL 时是登录名,DINGTALK 时是展示提示,不是 unionId。 */
+  readonly externalId: string
+  readonly displayHint: string | null
+  /** 从未登录成功过时为 `null`(`UserIdentity.newLocal` 建号时就是 `null`)。 */
+  readonly lastLoginAt: string | null
+  readonly createdAt: string
+}
+
+/**
+ * `GET /auth/me` 响应体,对应 `MeResponse.java`。
+ *
+ * **不是** `SkillOwner` 的超集,字段名也不同(`id` 不是 `userId`)——两者是完全独立的两个 DTO,
+ * 不要试图共用一个类型。
+ */
+export interface CurrentUser {
+  readonly id: number
+  readonly displayName: string
+  readonly employeeNo: string | null
+  readonly email: string | null
+  readonly avatarUrl: string | null
+  readonly role: UserRole
+  readonly identities: IdentitySummary[]
+}
+
+/**
+ * `GET /users` 列表一行(ADMIN 专属),对应 `UserSummaryResponse.java`。
+ * `providers` 是这个人持有的登录方式集合,**不含** `externalId`(登录名不对外展示)。
  */
 export interface UserSummary {
   readonly id: number
   readonly displayName: string
   readonly employeeNo: string | null
-}
-
-export interface CurrentUser {
-  readonly id: number
-  readonly displayName: string
-  readonly employeeNo: string | null
+  readonly email: string | null
   readonly role: UserRole
-  readonly identities: ReadonlyArray<{
-    readonly provider: AuthProviderCode
-    /** LOCAL 时是登录名,DINGTALK 时是展示提示,不是 unionId(建模 4.4)。 */
-    readonly externalId: string
-  }>
+  readonly status: AppUserStatus
+  readonly providers: AuthProviderCode[]
+  readonly createdAt: string
 }
 
-// ==================== 标签 ====================
+export interface UserListFilter extends PageQuery {
+  /** 后端用 `@Pattern(regexp = "LOCAL|DINGTALK")` 精确匹配大写,不是大小写不敏感。 */
+  readonly provider?: AuthProviderCode
+}
 
+// ==================== 标签(tags) ====================
+
+/** `GET /tags` 的一个词条,对应 `TagResponse.java`。 */
 export interface Tag {
   readonly id: number
   readonly name: string
   readonly kind: TagKind
   readonly description: string | null
   readonly sortOrder: number
-  /** 该标签下的 skill 数,GET /tags 附带,实时 GROUP BY 算出(建模表结构第 8 条)。 */
+  /** 实时 GROUP BY 算出的可见 skill 数,只有 `/tags` 列表带这个字段。 */
   readonly skillCount: number
+}
+
+/**
+ * skill 详情/卡片上嵌套的标签行元素,对应 `SkillTagResponse.java`。
+ * 与 {@link Tag} 字段几乎相同,**唯独没有 `skillCount`**——不是同一个响应体,不能共用类型。
+ */
+export interface SkillTag {
+  readonly id: number
+  readonly name: string
+  readonly kind: TagKind
+  readonly description: string | null
+  readonly sortOrder: number
 }
 
 // ==================== skill ====================
 
 /**
- * 列表卡片所需字段,对应展示约定 7.1 的七个元素。
- * `tags` 已包含 CURATED 与 FREE,前端按 `kind` 分组渲染(展示约定 7.2)。
+ * `GET /skills` 列表卡片,对应 `SkillSummaryResponse.java`。
+ *
+ * **与详情响应体是两个完全独立的结构,不是彼此的子集/超集**(与 P0 手写版的假设不同)。列表里
+ * **没有 `description` / `source` / `status` / `dislikeCount` / `commentCount`**,也**没有版本号**——
+ * `certification` 是唯一暴露的版本相关字段,取自 `skill.latestVersion()`,`latestVersion == null` 时
+ * 服务端已回落成 `'NONE'`(见 `SkillSummaryResponse.from`),前端不需要也不能自己再判断一次。
  */
 export interface SkillSummary {
+  readonly id: number
+  readonly name: string
+  readonly displayName: string
+  readonly cardExcerpt: string
+  readonly certification: CertificationStatus
+  readonly downloadCount: number
+  readonly likeCount: number
+  readonly favoriteCount: number
+  readonly updatedAt: string
+  readonly owner: SkillOwner | null
+  readonly tags: SkillTag[]
+}
+
+/**
+ * `GET /skills/{id}/versions` 的一个版本条目,对应 `SkillVersionResponse.java`。**不含正文**
+ * (`skillMdContent` / `readmeContent` / `changelog` / `allowedTools` 只有详情场景才 SELECT)。
+ */
+export interface SkillVersionSummary {
+  readonly id: number
+  readonly version: string
+  readonly sizeBytes: number
+  readonly fileCount: number
+  readonly certification: CertificationStatus
+  readonly certifiedByUserId: number | null
+  readonly certifiedAt: string | null
+  readonly certifyNote: string | null
+  readonly createdByUserId: number | null
+  readonly createdAt: string
+}
+
+/**
+ * `GET /skills/{id}` 详情里的最新版本(含正文),对应 `SkillVersionDetailResponse.java`。
+ *
+ * `readmeContent` 非空则优先渲染它,否则渲染 `skillMdContent`——两个字段原样回传,由前端按此规则
+ * 二选一渲染,服务端不预先合并成一个字段。
+ */
+export interface SkillVersionDetail {
+  readonly id: number
+  readonly version: string
+  readonly sizeBytes: number
+  readonly fileCount: number
+  readonly allowedTools: string[]
+  readonly skillMdContent: string
+  readonly readmeContent: string | null
+  readonly changelog: string | null
+  readonly certification: CertificationStatus
+  readonly certifiedByUserId: number | null
+  readonly certifiedAt: string | null
+  readonly certifyNote: string | null
+  readonly createdByUserId: number | null
+  readonly createdAt: string
+}
+
+/**
+ * `GET /skills/{id}` 详情响应,对应 `SkillDetailResponse.java`。
+ *
+ * 刻意**没有** `myReaction` / `myFavorited` 字段——那是 P2 收藏/点赞点踩上线后才会存在的内容,当前
+ * 后端响应体里根本不返回这两个键(不是"恒为 null",而是压根没有这个字段)。P0 手写版把这两个字段
+ * 当作"恒为 null / false"写进类型是错的,已删除。
+ *
+ * `certification` 不是本响应体的顶层字段——认证状态挂在 `latestVersion.certification` 上;
+ * `latestVersion` 可能为 `null`(`SkillVersionDetailResponse.from` 显式处理了这个分支),前端要判断
+ * "未认证"时应读 `latestVersion?.certification ?? 'NONE'`,与列表页 `SkillSummary.certification`
+ * 的语义对齐。
+ */
+export interface SkillDetail {
   readonly id: number
   readonly name: string
   readonly displayName: string
   readonly description: string
   readonly source: SkillSource
   readonly status: SkillStatus
-  /** 卡片摘要,服务端已纯文本化并截到 200 字符;前端再截到 100 字符并自行加省略号(建模 5.6)。 */
   readonly cardExcerpt: string
   readonly downloadCount: number
   readonly likeCount: number
   readonly dislikeCount: number
   readonly favoriteCount: number
   readonly commentCount: number
-  readonly owner: UserSummary
-  readonly tags: Tag[]
-  /** 最新版本号与其认证状态,来自 skill join latest_version(建模 4.8)。 */
-  readonly latestVersion: string
-  readonly certification: CertificationStatus
-  /** "多久没更新"是选 skill 的关键判据,列表必须带(展示约定 7.1)。 */
+  readonly createdAt: string
   readonly updatedAt: string
+  readonly owner: SkillOwner | null
+  readonly tags: SkillTag[]
+  readonly latestVersion: SkillVersionDetail | null
 }
 
-export interface SkillVersionSummary {
-  readonly id: number
-  readonly version: string
-  readonly certification: CertificationStatus
-  readonly certifyNote: string | null
-  readonly createdAt: string
-}
-
-/**
- * 详情页在列表字段基础上,补正文与当前用户的互动状态。
- * `myReaction` / `myFavorited` 在 P2(点赞/收藏上线)前恒为 null / false。
- */
-export interface SkillDetail extends SkillSummary {
-  readonly skillMdContent: string
-  readonly readmeContent: string | null
-  readonly allowedTools: string[]
-  readonly fileCount: number
-  readonly sizeBytes: number
-  readonly createdAt: string
-  readonly myReaction: ReactionType | null
-  readonly myFavorited: boolean
-}
-
+/** `GET /skills` 查询参数,对应 `SkillController#listSkills` 的方法签名。 */
 export interface SkillListFilter extends PageQuery {
   readonly source?: SkillSource
-  /** 多值 AND,后端用 GROUP BY ... HAVING count(*) = n 实现(接口契约 6.3)。 */
+  /** 多值 AND,后端用 `GROUP BY ... HAVING count(*) = n` 实现,序列化成重复的 `tagIds=1&tagIds=2`。 */
   readonly tagIds?: number[]
   readonly certifiedOnly?: boolean
   readonly keyword?: string
   readonly ownerUserId?: number
-  readonly sort?: 'downloads' | 'likes' | 'latest'
+  readonly sort?: SkillSortOption
 }
 
-// ==================== 上传 precheck ====================
+// ==================== 上传(precheck / publish) ====================
 
 /**
- * `existing` 字段,重名时给出的决策依据(接口契约 6.2 precheck 响应示例)。
+ * `POST /skills/precheck` 响应体里 `existing` 字段,重名时给出的决策依据,对应
+ * `PrecheckResponse.ExistingSkillInfo`。
  */
 export interface SkillPrecheckExisting {
   readonly skillId: number
@@ -182,14 +292,33 @@ export interface SkillPrecheckExisting {
   readonly latestVersion: string
   /**
    * 服务端算好的权限位,前端只用它决定要不要显示"作为新版本"按钮,
-   * **真正的拦截在服务端**,不能自己判断权限(接口契约 6.2)。
+   * **真正的拦截在服务端**,不能自己判断权限。
    */
   readonly canPublishNewVersion: boolean
 }
 
+/** `contentDigest` 命中已有版本时的定位信息,对应 `PrecheckResponse.IdenticalMatch`。 */
+export interface SkillPrecheckIdenticalMatch {
+  readonly skillId: number
+  readonly version: string
+}
+
 /**
- * `POST /skills/precheck` 响应体,字段与结构严格对齐接口契约 6.2 的 JSON 示例。
- * `parsed` 里没有 `version` —— 版本号由上传表单提交,不从包里解析(建模 5.4)。
+ * 单条校验失败原因,对应 `PrecheckResponse.Violation`。**不是字符串数组**——P0 手写版猜成了
+ * `string[]`,实际后端返回的是 `{code, message}` 对象数组,前端可以按 `code` 分支处理不同违规类型。
+ */
+export interface SkillPrecheckViolation {
+  readonly code: string
+  readonly message: string
+}
+
+/**
+ * `POST /skills/precheck` 响应体,对应 `PrecheckResponse.java`。
+ *
+ * `valid=false` 时 `parsed` / `contentDigest` / `fileCount` / `unpackedBytes` / `hasReadme` /
+ * `identical` / `existing` / `suggestedName` 全部为 `null`(`PrecheckResult.invalid` 的构造方式),
+ * `violations` 恒非空。这几个字段因此按 Java 侧的装箱类型(`Integer`/`Long`/`Boolean`)如实标成可空,
+ * 不是"理论上不会是 null 但保守写了 null"。
  */
 export interface SkillPrecheckResult {
   readonly valid: boolean
@@ -198,24 +327,34 @@ export interface SkillPrecheckResult {
     readonly description: string
     readonly allowedTools: string[]
   } | null
-  readonly contentDigest: string
-  readonly fileCount: number
-  readonly unpackedBytes: number
-  readonly hasReadme: boolean
-  /** 非空表示 contentDigest 命中了已有版本,即"完全相同的包已存在"。 */
-  readonly identical: { readonly skillId: number; readonly version: string } | null
+  readonly contentDigest: string | null
+  readonly fileCount: number | null
+  readonly unpackedBytes: number | null
+  readonly hasReadme: boolean | null
+  readonly identical: SkillPrecheckIdenticalMatch | null
   readonly duplicatedName: boolean
   readonly existing: SkillPrecheckExisting | null
   readonly suggestedName: string | null
-  readonly violations: string[]
+  readonly violations: SkillPrecheckViolation[]
 }
 
-// ==================== 安装 ====================
+/** `POST /skills/{id}/update` 请求体,对应 `UpdateSkillRequest.java`。刻意没有 `name`——一经创建不可改名。 */
+export interface UpdateSkillPayload {
+  readonly displayName: string
+  readonly source: SkillSource
+  /** 后端 `@NotEmpty`:CURATED 标签数量必须在 1~3 之间。 */
+  readonly curatedTagIds: number[]
+  readonly freeTagNames?: string[]
+}
 
-/** `GET /clients` 返回的适配表条目,只含已实测组合(建模 5.9)。 */
+// ==================== 安装(clients / bundles / 脚本) ====================
+
+/** `GET /clients` 返回的适配表条目,对应 `ClientTargetResponse.java`。 */
 export interface ClientTarget {
   readonly client: ClientCode
   readonly scope: ScopeCode
+  /** 落盘子路径(如 `.claude/skills`),不含安装根目录本身。 */
+  readonly skillsSubDir: string
 }
 
 export interface InstallBundleItem {
@@ -223,6 +362,7 @@ export interface InstallBundleItem {
   readonly versionId: number
 }
 
+/** `POST /bundles` 请求体,对应 `CreateBundleRequest.java`。 */
 export interface InstallBundleRequest {
   readonly items: InstallBundleItem[]
   readonly client: ClientCode
@@ -230,29 +370,67 @@ export interface InstallBundleRequest {
 }
 
 /**
- * `POST /bundles` 只返回 token 与过期时间。真正的安装脚本是独立的 GET 端点
- * `/i/{token}.ps1` / `/i/{token}.sh`(不在 `/api/v1` 下,建模 5.9),前端拿 token
- * 拼 URL,不在这里预置脚本文本。
+ * `POST /bundles` 响应体,对应 `CreateBundleResponse.java`。
+ *
+ * **比 P0 手写版丰富得多**:后端已经拼好可直接复制粘贴的命令(`powerShellCommand` /
+ * `bashCommand`),前端不需要自己拼 `irm ... | iex` / `curl ... | sh` 这套模板——那本来就是这个平台
+ * 唯一的价值("选 skill -> 一条命令"),只值得在服务端写一遍。
  */
-export interface InstallBundleResponse {
+export interface InstallBundleResult {
   readonly token: string
   readonly expiresAt: string
+  readonly client: ClientCode
+  readonly scope: ScopeCode
+  readonly powerShellCommand: string
+  readonly bashCommand: string
 }
 
 // ==================== 认证 ====================
 
-export interface LoginRequest {
+export interface LoginPayload {
   readonly login: string
   readonly password: string
 }
 
-export interface LoginResponse {
-  readonly token: string
-  readonly expiresAt: string
-  readonly user: CurrentUser
+export interface RegisterPayload {
+  readonly displayName: string
+  readonly login: string
+  readonly password: string
 }
 
-/** `GET /auth/providers`,让服务端告诉前端有哪些登录方式按钮可用(建模 6.2)。 */
-export interface AuthProvidersResponse {
+/**
+ * `POST /auth/login` / `POST /auth/register` 响应体,对应 `LoginResponse.java`。
+ *
+ * **不是**嵌套的 `{ token, expiresAt, user: CurrentUser }`——P0 手写版猜的结构是错的。实际是扁平的
+ * `{ token, expiresAt, userId, displayName, role }`,**没有 `employeeNo` / `identities`**,登录后要拿
+ * 完整信息仍需另外调一次 `GET /auth/me`。
+ */
+export interface LoginResult {
+  readonly token: string
+  readonly expiresAt: string
+  readonly userId: number
+  readonly displayName: string
+  readonly role: UserRole
+}
+
+/**
+ * `GET /auth/providers`,对应 `ProvidersResponse.java`。**比 P0 手写版多一个 `localRegisterEnabled`**——
+ * 前端要不要显示"注册"入口由服务端告知,不该自己猜配置。
+ */
+export interface AuthProviders {
   readonly providers: AuthProviderCode[]
+  readonly localRegisterEnabled: boolean
+}
+
+export interface ChangePasswordPayload {
+  readonly oldPassword: string
+  readonly newPassword: string
+}
+
+/** `POST /users` 请求体(ADMIN 专属),对应 `CreateUserRequest.java`。`role` 缺省时后端按 `USER` 处理。 */
+export interface CreateUserPayload {
+  readonly displayName: string
+  readonly login: string
+  readonly password: string
+  readonly role?: UserRole
 }

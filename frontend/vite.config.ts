@@ -17,6 +17,13 @@ export default defineConfig({
         target: 'http://localhost:18080',
         changeOrigin: true,
       },
+      // 安装脚本端点刻意不挂在 /api/v1 下(业务建模文档 6.2:GET /i/{token}.ps1|.sh),
+      // 所以上面那条代理规则盖不住它。少了这条,dev 下点"复制安装命令"拿到的链接会 404,
+      // 而症状看起来像后端没起来。
+      '/skillhub/i': {
+        target: 'http://localhost:18080',
+        changeOrigin: true,
+      },
     },
   },
 

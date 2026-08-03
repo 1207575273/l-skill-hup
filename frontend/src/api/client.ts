@@ -3,8 +3,8 @@ import type { ApiErrorBody } from './types'
 /**
  * API 请求层的通用封装。**页面和组件不许直接 `fetch`**,一律走这里(frontend/CLAUDE.md 第五节)。
  *
- * 硬约束(单一事实源:docs/20260802224934_业务建模与接口契约.md 6.1):
- * - 只暴露 `apiGet` / `apiPost` 两个入口,对齐项目"只用 GET/POST"的硬约束,
+ * 硬约束:
+ * - 只暴露 `apiGet` / `apiPost` / `apiPostFormData` 三个入口,对齐项目"只用 GET/POST"的硬约束,
  *   写操作的资源函数里自己拼 `/xxx/update`、`/xxx/delete` 路径。
  * - 基址固定 `/skillhub/api/v1`,可用 `VITE_API_BASE_URL` 覆盖,但**不硬编码后端地址**。
  * - 非 2xx 响应一律解析成 `ApiError` 抛出,`traceId` 必须能带出来。
@@ -18,7 +18,8 @@ function resolveApiBaseUrl(): string {
   return configured && configured.trim() !== '' ? configured : DEFAULT_API_BASE_URL
 }
 
-const API_BASE_URL = resolveApiBaseUrl()
+/** 供各领域资源函数拼接非 JSON 端点(如制品下载链接)用,不要在别处硬编码 `/skillhub/api/v1`。 */
+export const API_BASE_URL = resolveApiBaseUrl()
 
 // ---------------------------------------------------------------------------
 // 认证 token:P0 的登录页尚未实现,这里先给出存取入口。
@@ -158,46 +159,61 @@ function readMessage(value: unknown): string | undefined {
 
 export type QueryParamValue = string | number | boolean | undefined
 
+/**
+ * 查询参数值。多值参数(如 `tagIds`)用数组,序列化成重复的 `key=a&key=b`——这是 Spring
+ * `@RequestParam List<Long>` 唯一无歧义支持的形态,不用逗号拼接单值字符串(那依赖框架的隐式转换,
+ * 不同版本行为不保证一致)。空数组等价于不传这个参数。
+ */
+export type QueryParams = Record<string, QueryParamValue | ReadonlyArray<string | number>>
+
 export interface RequestOptions {
-  readonly query?: Record<string, QueryParamValue>
+  readonly query?: QueryParams
   readonly signal?: AbortSignal
 }
 
-function buildUrl(path: string, query?: Record<string, QueryParamValue>): string {
+function buildUrl(path: string, query?: QueryParams): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
   const url = new URL(`${API_BASE_URL}${path}`, origin)
   if (query) {
     for (const [key, value] of Object.entries(query)) {
-      if (value !== undefined) {
-        url.searchParams.set(key, String(value))
-      }
+      appendQueryParam(url.searchParams, key, value)
     }
   }
   return url.toString()
 }
 
-async function request<T>(
-  method: 'GET' | 'POST',
-  path: string,
-  body: unknown,
-  options: RequestOptions | undefined,
-): Promise<T> {
+function appendQueryParam(
+  searchParams: URLSearchParams,
+  key: string,
+  value: QueryParamValue | ReadonlyArray<string | number>,
+): void {
+  if (value === undefined) {
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      searchParams.append(key, String(item))
+    }
+    return
+  }
+  searchParams.set(key, String(value))
+}
+
+function buildHeaders(hasJsonBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {}
-  if (body !== undefined) {
+  if (hasJsonBody) {
     headers['Content-Type'] = 'application/json'
   }
+  // multipart 请求刻意不在这里设置 Content-Type——浏览器要自己生成带 boundary 的值,
+  // 手动设置反而会丢掉 boundary 导致服务端解析不出 multipart 分片。
   const token = getAuthToken()
   if (token) {
     headers.Authorization = `Bearer ${token}`
   }
+  return headers
+}
 
-  const response = await fetch(buildUrl(path, options?.query), {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: options?.signal,
-  }).catch(toNetworkError)
-
+async function readJsonResponse<T>(response: Response): Promise<T> {
   if (response.status === 204) {
     return undefined as T
   }
@@ -211,12 +227,56 @@ async function request<T>(
   return payload as T
 }
 
+async function request<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  body: unknown,
+  options: RequestOptions | undefined,
+): Promise<T> {
+  const response = await fetch(buildUrl(path, options?.query), {
+    method,
+    headers: buildHeaders(body !== undefined),
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: options?.signal,
+  }).catch(toNetworkError)
+
+  return readJsonResponse<T>(response)
+}
+
+async function requestFormData<T>(
+  path: string,
+  formData: FormData,
+  options: RequestOptions | undefined,
+): Promise<T> {
+  const response = await fetch(buildUrl(path, options?.query), {
+    method: 'POST',
+    headers: buildHeaders(false),
+    body: formData,
+    signal: options?.signal,
+  }).catch(toNetworkError)
+
+  return readJsonResponse<T>(response)
+}
+
 /** GET 请求。查询参数走 `options.query`,不许拼在 path 字符串里。 */
 export function apiGet<T>(path: string, options?: RequestOptions): Promise<T> {
   return request<T>('GET', path, undefined, options)
 }
 
-/** POST 请求。项目宪法只用 GET/POST,更新用 `/xxx/{id}/update`,删除用 `/xxx/{id}/delete`。 */
+/** POST 请求(JSON body)。项目宪法只用 GET/POST,更新用 `/xxx/{id}/update`,删除用 `/xxx/{id}/delete`。 */
 export function apiPost<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
   return request<T>('POST', path, body, options)
+}
+
+/**
+ * POST 请求(multipart/form-data)。专给上传类端点用(`POST /skills/precheck`、`POST /skills`、
+ * `POST /skills/{id}/versions`),错误模型与 `apiGet`/`apiPost` 完全一致(同样解析成 `ApiError`),
+ * 唯一区别是不发 JSON body、不设 `Content-Type`。
+ */
+export function apiPostFormData<T>(
+  path: string,
+  formData: FormData,
+  options?: RequestOptions,
+): Promise<T> {
+  return requestFormData<T>(path, formData, options)
 }
