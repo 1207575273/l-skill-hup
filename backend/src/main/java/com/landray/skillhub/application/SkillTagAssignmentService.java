@@ -24,7 +24,15 @@ import com.landray.skillhub.domain.repository.TagRepository;
 @Service
 public class SkillTagAssignmentService {
 
-    private static final int MIN_CURATED = 1;
+    /**
+     * CURATED 分类的上限。<b>没有下限——一个都不选是合法的</b>(业务建模文档 5.7)。
+     *
+     * <p>上一版是必选 1~3,理由是"CURATED 是导航分类,没有分类的 skill 不出现在任何分类下"。那个后果是真的,
+     * 但它是<b>可见的、可事后修复的</b> —— 作者随时能补,而且没分类的 skill 仍然出现在默认列表与搜索里
+     * (标签筛选是可选条件,不筛时不影响)。反过来,必选把成本压在了最不合适的时刻:上传的人往往还没想好归到
+     * 哪一类,却被拦在门外,只能随便挑一个凑数。<b>随手凑的分类比没有分类更糟</b> —— 它污染导航,而且没人会
+     * 回头订正一个"看起来已经填了"的字段。
+     */
     private static final int MAX_CURATED = 3;
     private static final int MAX_FREE = 10;
     private static final int MAX_FREE_TAG_NAME_LENGTH = 16;
@@ -38,17 +46,16 @@ public class SkillTagAssignmentService {
     }
 
     /**
-     * 校验数量约束(CURATED 1~3、FREE 至多 10)并把 CURATED 标签 id + FREE 标签名解析成最终的 tag id 列表。
-     * FREE 标签不存在则自动创建。
+     * 校验数量约束(CURATED 至多 3、FREE 至多 10)并把 CURATED 标签 id + FREE 标签名解析成最终的 tag id 列表。
+     * FREE 标签不存在则自动创建。两者都可以为空。
      */
     public List<Long> resolveTagIds(List<Long> curatedTagIds, List<String> freeTagNames, long actingUserId) {
         List<Long> normalizedCurated = curatedTagIds == null ? List.of() : List.copyOf(curatedTagIds);
         List<String> normalizedFreeNames = normalizeFreeNames(freeTagNames);
 
-        if (normalizedCurated.size() < MIN_CURATED || normalizedCurated.size() > MAX_CURATED) {
+        if (normalizedCurated.size() > MAX_CURATED) {
             throw new TagSelectionInvalidException(
-                    "CURATED 标签数量必须在 " + MIN_CURATED + "~" + MAX_CURATED + " 之间,实际为 "
-                            + normalizedCurated.size());
+                    "CURATED 标签至多 " + MAX_CURATED + " 个,实际为 " + normalizedCurated.size());
         }
         if (normalizedFreeNames.size() > MAX_FREE) {
             throw new TagSelectionInvalidException(

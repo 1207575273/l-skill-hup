@@ -45,12 +45,23 @@ class SkillTagAssignmentServiceTest {
     }
 
     @Test
-    @DisplayName("CURATED 数量为 0 时拒绝")
-    void should_reject_when_curatedCountIsZero() {
+    @DisplayName("CURATED 数量为 0 时放行——分类可以发布后再补,不该卡在上传那一步")
+    void should_allowEmptyCurated_when_uploaderSkipsCategory() {
+        // 上一版要求至少 1 个,理由是"CURATED 是导航分类,没有分类的 skill 不出现在任何分类下"。
+        // 那个后果是真的,但它是**可见的、可事后修复的**——作者随时能补;而必选把成本压在了最不合适的
+        // 时刻:上传的人往往还没想好归到哪一类,却被拦在门外,只能随便挑一个凑数。
+        // 随手凑的分类比没有分类更糟:它会污染导航,而且没人会回头订正一个"看起来已经填了"的字段。
         service = service();
 
-        assertThatThrownBy(() -> service.resolveTagIds(List.of(), List.of(), 1L))
-                .isInstanceOf(TagSelectionInvalidException.class);
+        assertThat(service.resolveTagIds(List.of(), List.of(), 1L)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("零分类零标签也不算错——完全不打标签是合法状态")
+    void should_allowCompletelyUntagged_when_neitherCuratedNorFreeGiven() {
+        service = service();
+
+        assertThat(service.resolveTagIds(null, null, 1L)).isEmpty();
     }
 
     @Test

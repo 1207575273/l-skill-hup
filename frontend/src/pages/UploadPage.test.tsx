@@ -191,6 +191,24 @@ describe('UploadPage', () => {
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/skills/7'))
   })
 
+  it('should_publish_without_selecting_any_category', async () => {
+    // 分类曾经必选,已放宽(业务建模 5.7):上传的人往往还没想好归到哪一类,
+    // 被拦在门外只能随便挑一个凑数,而随手凑的分类比没有分类更糟。
+    setAuthToken('tok')
+    mockedFetchCurrentUser.mockResolvedValue(CURRENT_USER)
+    mockedPrecheck.mockResolvedValue(VALID_PRECHECK)
+    mockedPublishSkill.mockResolvedValue({ id: 8 } as SkillDetail)
+    renderPage()
+
+    await selectValidSingleSkillMdFile()
+    fireEvent.change(screen.getByLabelText('版本号'), { target: { value: '1.0.0' } })
+    // 刻意不点任何分类
+    fireEvent.click(screen.getByRole('button', { name: '发布' }))
+
+    await waitFor(() => expect(mockedPublishSkill).toHaveBeenCalledTimes(1))
+    expect(mockedPublishSkill.mock.calls[0]?.[0]).toMatchObject({ curatedTagIds: [] })
+  })
+
   it('should_show_server_violations_when_precheck_reports_them', async () => {
     setAuthToken('tok')
     mockedFetchCurrentUser.mockResolvedValue(CURRENT_USER)

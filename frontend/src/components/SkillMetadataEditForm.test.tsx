@@ -62,14 +62,19 @@ describe('SkillMetadataEditForm', () => {
     )
   })
 
-  it('should_block_submit_and_show_validation_message_when_no_curated_tag_selected', () => {
+  it('should_submit_with_empty_curated_tags_when_all_categories_unchecked', () => {
+    // 分类曾经必选,已放宽为可不选(业务建模 5.7)。这条测试原本断言"取消勾选后被拦下",
+    // 那正是要去掉的行为 —— 作者可以先发布、之后再补分类。
+    //
+    // 改断言而不是删掉它:清空分类必须能提交出去,而且要真的传空数组 —— 只验"没报错"的话,
+    // 表单把这一项悄悄丢掉、根本没进请求体,测试照样绿。
     const { onSubmit } = renderForm({ initialCuratedTagIds: [1] })
 
     fireEvent.click(screen.getByRole('checkbox', { name: '代码审查' }))
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }))
 
-    expect(screen.getByRole('alert')).toHaveTextContent('分类标签需选择 1~3 个')
-    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ curatedTagIds: [] }))
   })
 
   it('should_call_onCancel_when_cancel_button_clicked', () => {

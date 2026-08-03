@@ -26,14 +26,14 @@ const SOURCE_OPTIONS: ReadonlyArray<{ value: SkillSource; label: string }> = [
   { value: 'COMMUNITY', label: '社区' },
 ]
 
-const MIN_CURATED_TAGS = 1
+/** 分类可以不选,见 UploadPage 同名常量的注释与业务建模 5.7。 */
 const MAX_CURATED_TAGS = 3
 const MAX_FREE_TAGS = 10
 
 /**
  * skill 元数据编辑表单(展示名 / 来源 / 标签),owner / ADMIN 专用(权限矩阵 5.16)。
  *
- * 数量校验(CURATED 1~3、FREE 至多 10,见 5.7)只是提交前的即时反馈,不是安全边界——
+ * 数量校验(CURATED 至多 3、FREE 至多 10,见 5.7)只是提交前的即时反馈,不是安全边界——
  * 服务端会在同一事务内把这两条规则完整重做一遍(项目宪法第七节)。
  */
 export function SkillMetadataEditForm({
@@ -63,8 +63,8 @@ export function SkillMetadataEditForm({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    if (curatedTagIds.length < MIN_CURATED_TAGS || curatedTagIds.length > MAX_CURATED_TAGS) {
-      setValidationMessage(`分类标签需选择 ${MIN_CURATED_TAGS}~${MAX_CURATED_TAGS} 个`)
+    if (curatedTagIds.length > MAX_CURATED_TAGS) {
+      setValidationMessage(`分类标签至多选 ${MAX_CURATED_TAGS} 个`)
       return
     }
 
@@ -101,7 +101,7 @@ export function SkillMetadataEditForm({
 
       <fieldset className="flex flex-col gap-2">
         <legend className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          分类标签(至少 1 个,至多 3 个)
+          分类标签(可不选,至多 3 个)
         </legend>
         <div className="flex flex-wrap gap-3">
           {curatedTagOptions.map((tag) => (

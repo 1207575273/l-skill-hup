@@ -82,8 +82,13 @@ interface DuplicateDecisionState {
 
 /** 业务建模 5.4:必须匹配 SemVer,不支持预发布标识与构建元数据。 */
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
-/** 业务建模 5.7:CURATED 每个 skill 1~3 个,FREE 至多 10 个,单个标签长度上限 16。 */
-const MIN_CURATED_TAGS = 1
+/**
+ * 业务建模 5.7:CURATED 每个 skill **至多 3 个、可以不选**,FREE 至多 10 个,单个标签长度上限 16。
+ *
+ * 分类曾经是必选(至少 1 个),已放宽:上传的人往往还没想好归到哪一类,被拦在门外只能随便挑一个凑数,
+ * 而随手凑的分类比没有分类更糟——它污染导航,且没人会回头订正一个"看起来已经填了"的字段。
+ * 没分类的 skill 仍然出现在浏览页与搜索里,只是不出现在分类导航下,作者随时能补。
+ */
 const MAX_CURATED_TAGS = 3
 const MAX_FREE_TAGS = 10
 const FREE_TAG_MAX_LENGTH = 16
@@ -134,8 +139,8 @@ function validatePublishForm(form: PublishFormState): PublishFormErrors {
     : '版本号必须是 SemVer 格式,如 1.0.0'
 
   const curatedTagIdsError =
-    form.curatedTagIds.length < MIN_CURATED_TAGS || form.curatedTagIds.length > MAX_CURATED_TAGS
-      ? `分类标签需选择 ${MIN_CURATED_TAGS}~${MAX_CURATED_TAGS} 个`
+    form.curatedTagIds.length > MAX_CURATED_TAGS
+      ? `分类标签至多选 ${MAX_CURATED_TAGS} 个`
       : undefined
 
   const freeTags = parseFreeTags(form.freeTagsRaw)
