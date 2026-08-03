@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { skillKeys, tagKeys } from '../api/queryKeys'
 import type { PublishSkillPayload, PublishSkillVersionPayload } from '../api/skills'
 import {
+  deleteSkill,
   precheckSkillPackage,
   publishSkill,
   publishSkillVersion,
@@ -77,7 +78,13 @@ export function useUpdateSkillMetadata(skillId: number) {
   })
 }
 
-/** `POST /skills/{id}/unlist`。失效列表——下架后这条要立刻从列表消失。 */
+/**
+ * `POST /skills/{id}/unlist`。失效公开列表(下架后这条要立刻消失)**和管理视图**
+ * (那边这条不消失,但状态徽章要从"已发布"变成"已下架")。
+ *
+ * 两处都要标是因为它们是两份独立缓存(`lists()` 与 `managedAll()`)。只标公开列表的话,
+ * 在管理页点下架会看起来毫无反应 —— 而管理页恰恰是最常触发这个动作的地方。
+ */
 export function useUnlistSkill(skillId: number) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -85,11 +92,33 @@ export function useUnlistSkill(skillId: number) {
     onSuccess: (skill: SkillDetail) => {
       queryClient.setQueryData(skillKeys.detail(skillId), skill)
       queryClient.invalidateQueries({ queryKey: skillKeys.lists() })
+      queryClient.invalidateQueries({ queryKey: skillKeys.managedAll() })
     },
   })
 }
 
-/** `POST /skills/{id}/relist`。失效列表——恢复后这条要重新出现在列表。 */
+/**
+ * `POST /skills/{id}/delete`,**物理删除,不可逆**。
+ *
+ * 成功后把这条的详情缓存直接**移除**而不是置空:留一个 undefined 的缓存条目,
+ * 详情页再进来时会先渲染一帧"加载完成但没数据"的空壳,而正确的表现是 404。
+ *
+ * 管理视图与公开列表两处缓存都要失效 —— 删掉的 skill 在两边都不该继续出现,
+ * 只失效其中一处会让另一处留着一张点进去就 404 的卡片。
+ */
+export function useDeleteSkill(skillId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => deleteSkill(skillId),
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: skillKeys.detail(skillId) })
+      queryClient.invalidateQueries({ queryKey: skillKeys.managedAll() })
+      queryClient.invalidateQueries({ queryKey: skillKeys.lists() })
+    },
+  })
+}
+
+/** `POST /skills/{id}/relist`。失效范围同 {@link useUnlistSkill},两处缓存都要标。 */
 export function useRelistSkill(skillId: number) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -97,6 +126,7 @@ export function useRelistSkill(skillId: number) {
     onSuccess: (skill: SkillDetail) => {
       queryClient.setQueryData(skillKeys.detail(skillId), skill)
       queryClient.invalidateQueries({ queryKey: skillKeys.lists() })
+      queryClient.invalidateQueries({ queryKey: skillKeys.managedAll() })
     },
   })
 }

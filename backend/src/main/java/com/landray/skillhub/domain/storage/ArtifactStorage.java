@@ -30,6 +30,18 @@ public interface ArtifactStorage {
      */
     InputStream openRead(String artifactKey);
 
+    /**
+     * 删除制品。<b>幂等</b>:key 不存在时正常返回,不抛异常。
+     *
+     * <p>与 {@link #openRead} 对缺失 key 抛异常刻意相反,因为两者的调用语境不同:读取时"文件不在"意味着调用方
+     * 拿到的数据是错的,必须炸;删除时"文件不在"意味着目标状态已经达成,抛异常只会让上层的收尾流程半途而废,
+     * 反而留下更多孤儿文件。
+     *
+     * <p>实现必须对 key 做与 {@link #store} 同样的越界校验 —— 少一处就等于开了个"用删除做目录穿越"的口子,
+     * 而删除的破坏力比读取更大。
+     */
+    void delete(String artifactKey);
+
     boolean exists(String artifactKey);
 
     /** 制品字节数。用于下载时设置 {@code Content-Length},免得调用方为了拿长度先把整个流读一遍。 */

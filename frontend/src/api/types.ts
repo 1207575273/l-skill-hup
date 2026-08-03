@@ -204,6 +204,22 @@ export interface SkillSummary {
 }
 
 /**
+ * `GET /skills/manage` 的行。**与 `SkillSummary` 是两个类型,不要合并**:
+ * 管理视图含已下架,所以 `status` 是它的主信息;公开列表恒为 `PUBLISHED`,带上那个字段只是噪音。
+ * 字段也刻意更少 —— 管理页是操作表格,不渲染卡片,不需要摘要、标签、点赞收藏数。
+ */
+export interface ManagedSkill {
+  readonly id: number
+  readonly name: string
+  readonly displayName: string
+  readonly status: 'PUBLISHED' | 'UNLISTED'
+  readonly certification: CertificationStatus
+  readonly downloadCount: number
+  readonly updatedAt: string
+  readonly latestVersionId: number | null
+}
+
+/**
  * `GET /skills/{id}/versions` 的一个版本条目,对应 `SkillVersionResponse.java`。**不含正文**
  * (`skillMdContent` / `readmeContent` / `changelog` / `allowedTools` 只有详情场景才 SELECT)。
  */

@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.landray.skillhub.domain.exception.ClientScopeNotSupportedException;
 import com.landray.skillhub.domain.exception.InstallBundleExpiredException;
+import com.landray.skillhub.domain.exception.InstallBundleItemsGoneException;
 import com.landray.skillhub.domain.model.ClientTarget;
 import com.landray.skillhub.domain.model.InstallBundle;
 import com.landray.skillhub.domain.model.InstallItem;
@@ -146,9 +147,28 @@ public class InstallApplicationService {
         List<SkillArtifact> resolved = skillArtifactRepository.findByVersionIds(versionIds);
         List<SkillArtifact> ordered = orderByItems(bundle.items(), resolved);
 
+        // 解析不到的条目 = 生成安装单之后被物理删除的 skill(生成时 validateItemsResolvable 已确保每一条都存在)。
+        // 这个差值必须一路传到脚本里说出来:orderByItems 会静默 filter 掉它们,不说的话用户拿到的是一个
+        // "看起来正常、实际少装了几个"的脚本,而这是最难自查的一类问题。
+        int deletedItemCount = bundle.items().size() - ordered.size();
+        if (ordered.isEmpty()) {
+            log.warn(
+                    "安装单里的 skill 已全部被删除, token={}, itemCount={}",
+                    SensitiveValueMasker.mask(token),
+                    bundle.items().size());
+            throw new InstallBundleItemsGoneException();
+        }
+        if (deletedItemCount > 0) {
+            log.warn(
+                    "安装单里有 skill 已被删除,将跳过, token={}, deletedItemCount={}, remaining={}",
+                    SensitiveValueMasker.mask(token),
+                    deletedItemCount,
+                    ordered.size());
+        }
+
         auditRevokedHits(token, clientIp, ordered);
 
-        String content = renderFunction.render(bundle, ordered, installProperties.publicBaseUrl());
+        String content = renderFunction.render(bundle, ordered, installProperties.publicBaseUrl(), deletedItemCount);
         return new RenderedScript(content);
     }
 
@@ -195,6 +215,6 @@ public class InstallApplicationService {
 
     @FunctionalInterface
     private interface ScriptRenderFunction {
-        String render(InstallBundle bundle, List<SkillArtifact> artifacts, String publicBaseUrl);
+        String render(InstallBundle bundle, List<SkillArtifact> artifacts, String publicBaseUrl, int deletedItemCount);
     }
 }

@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -12,6 +14,7 @@ import static org.mockito.Mockito.when;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
@@ -23,6 +26,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -358,7 +362,7 @@ class SkillApplicationServiceTest {
     @Test
     @DisplayName("path 含控制字符时被拒绝,不碰存储")
     void should_throwFileNotFound_when_pathContainsControlCharacter() {
-        assertThatThrownBy(() -> service.getVersionFileContent(1L, 10L, "references/guide .md"))
+        assertThatThrownBy(() -> service.getVersionFileContent(1L, 10L, "references/guide\0.md"))
                 .isInstanceOf(ResourceNotFoundException.class);
         verifyNoInteractions(skillRepository, artifactStorage);
     }
@@ -544,5 +548,107 @@ class SkillApplicationServiceTest {
         assertThat(service.relist(1L, owner)).isNotNull();
 
         verify(skillRepository).updateStatus(1L, SkillStatus.PUBLISHED);
+    }
+
+    // ------------------------------------------------------------------
+    // 物理删除:不可逆,所以权限、顺序、失败方向都要钉死
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("删除:owner 可以操作,库行与制品文件都清掉")
+    void should_deleteSkillAndArtifacts_when_actingUserIsOwner() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        when(skillRepository.findVersionArtifactKeys(1L)).thenReturn(List.of(ARTIFACT_KEY, "artifacts/1/1.1.0.zip"));
+        AuthenticatedUser owner = new AuthenticatedUser(2L, UserRole.USER, 10L, 100L);
+
+        service.delete(1L, owner);
+
+        verify(skillRepository).deleteSkillCascade(1L);
+        verify(artifactStorage).delete(ARTIFACT_KEY);
+        verify(artifactStorage).delete("artifacts/1/1.1.0.zip");
+    }
+
+    @Test
+    @DisplayName("删除:ADMIN 可以删别人的 skill")
+    void should_deleteSkill_when_actingUserIsAdmin() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        when(skillRepository.findVersionArtifactKeys(1L)).thenReturn(List.of());
+        AuthenticatedUser admin = new AuthenticatedUser(999L, UserRole.ADMIN, 10L, 100L);
+
+        service.delete(1L, admin);
+
+        verify(skillRepository).deleteSkillCascade(1L);
+    }
+
+    @Test
+    @DisplayName("删除:既非 owner 也非 ADMIN 时拒绝,一行一个字节都不许动")
+    void should_rejectDelete_when_actingUserIsNeitherOwnerNorAdmin() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        AuthenticatedUser stranger = new AuthenticatedUser(999L, UserRole.USER, 10L, 100L);
+
+        assertThatThrownBy(() -> service.delete(1L, stranger)).isInstanceOf(AccessDeniedException.class);
+
+        verify(skillRepository, never()).deleteSkillCascade(anyLong());
+        verifyNoInteractions(artifactStorage);
+    }
+
+    @Test
+    @DisplayName("删除:skill 不存在时 404,不做任何删除")
+    void should_rejectDelete_when_skillNotFound() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.empty());
+        AuthenticatedUser admin = new AuthenticatedUser(999L, UserRole.ADMIN, 10L, 100L);
+
+        assertThatThrownBy(() -> service.delete(1L, admin)).isInstanceOf(ResourceNotFoundException.class);
+
+        verify(skillRepository, never()).deleteSkillCascade(anyLong());
+        verifyNoInteractions(artifactStorage);
+    }
+
+    @Test
+    @DisplayName("删除:必须先取 artifactKey 再删库行——反过来就再也不知道该删哪些文件")
+    void should_collectArtifactKeys_beforeDeletingRows() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        when(skillRepository.findVersionArtifactKeys(1L)).thenReturn(List.of(ARTIFACT_KEY));
+        AuthenticatedUser owner = new AuthenticatedUser(2L, UserRole.USER, 10L, 100L);
+
+        service.delete(1L, owner);
+
+        // 顺序本身就是需求:这两步换个位置,代码照样跑通、测试照样绿(如果不验顺序的话),
+        // 而线上表现是制品文件永久残留 —— 没有任何报错,只是磁盘一直涨。
+        InOrder inOrder = inOrder(skillRepository, artifactStorage);
+        inOrder.verify(skillRepository).findVersionArtifactKeys(1L);
+        inOrder.verify(skillRepository).deleteSkillCascade(1L);
+        inOrder.verify(artifactStorage).delete(ARTIFACT_KEY);
+    }
+
+    @Test
+    @DisplayName("删除:标签走 replaceSkillTags(空集合),复用孤儿 FREE 标签清理规则")
+    void should_clearTagsThroughAssignmentService_when_deleted() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        when(skillRepository.findVersionArtifactKeys(1L)).thenReturn(List.of());
+        AuthenticatedUser owner = new AuthenticatedUser(2L, UserRole.USER, 10L, 100L);
+
+        service.delete(1L, owner);
+
+        // 不自己写一遍删标签的 SQL:孤儿 FREE 标签的清理规则(5.7)只该有一处实现,
+        // 删除路径漏掉它的话,/tags/suggest 会一直把死词条推给用户。
+        verify(tagAssignmentService).replaceSkillTags(1L, List.of());
+    }
+
+    @Test
+    @DisplayName("删除:某个制品文件删不掉时,剩下的照删,不让一个文件卡住整轮收尾")
+    void should_keepDeletingRemainingArtifacts_when_oneArtifactFails() {
+        when(skillRepository.findDetailById(1L)).thenReturn(Optional.of(sampleSkill()));
+        when(skillRepository.findVersionArtifactKeys(1L)).thenReturn(List.of("bad.zip", "good.zip"));
+        doThrow(new UncheckedIOException("制品删除失败", new IOException("被占用")))
+                .when(artifactStorage)
+                .delete("bad.zip");
+        AuthenticatedUser owner = new AuthenticatedUser(2L, UserRole.USER, 10L, 100L);
+
+        // 库行此时已经删了,再把异常抛给调用方只会让前端显示"删除失败"而实际上已经删掉了 ——
+        // 那是最糟的一种反馈。留下的孤儿文件是垃圾,不是数据损坏。
+        service.delete(1L, owner);
+
+        verify(artifactStorage).delete("good.zip");
     }
 }

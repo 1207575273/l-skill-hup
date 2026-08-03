@@ -1,6 +1,7 @@
 import { Outlet, Route, Routes } from 'react-router'
 import InstallPage from '../pages/InstallPage'
 import LoginPage from '../pages/LoginPage'
+import ManagePage from '../pages/ManagePage'
 import RegisterPage from '../pages/RegisterPage'
 import SkillDetailPage from '../pages/SkillDetailPage'
 import SkillListPage from '../pages/SkillListPage'
@@ -34,6 +35,9 @@ export default function AppRouter() {
         <Route path="/" element={<SkillListPage />} />
         <Route path="/skills/:id" element={<SkillDetailPage />} />
         <Route path="/upload" element={<UploadPage />} />
+        {/* 管理页自己处理未登录(引导登录),路由不做守卫 —— 与上传页同一套:
+            把"要不要登录"的判断放路由表里,会让两处各判一次而且迟早不一致。 */}
+        <Route path="/manage" element={<ManagePage />} />
         <Route path="/install" element={<InstallPage />} />
         <Route path="/login" element={<LoginPage />} />
         {/* 注册页自己按 /auth/providers 的 localRegisterEnabled 决定放不放行 ——

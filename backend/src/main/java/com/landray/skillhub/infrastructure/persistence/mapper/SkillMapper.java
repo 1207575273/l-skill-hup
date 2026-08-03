@@ -37,6 +37,7 @@ public interface SkillMapper {
             @Param("certifiedOnly") boolean certifiedOnly,
             @Param("keywordPattern") String keywordPattern,
             @Param("ownerUserId") Long ownerUserId,
+            @Param("statuses") List<String> statuses,
             @Param("sortColumn") String sortColumn,
             @Param("limit") int limit,
             @Param("offset") int offset);
@@ -47,7 +48,8 @@ public interface SkillMapper {
             @Param("tagCount") int tagCount,
             @Param("certifiedOnly") boolean certifiedOnly,
             @Param("keywordPattern") String keywordPattern,
-            @Param("ownerUserId") Long ownerUserId);
+            @Param("ownerUserId") Long ownerUserId,
+            @Param("statuses") List<String> statuses);
 
     List<SkillTagRow> selectTagsBySkillIds(@Param("skillIds") List<Long> skillIds);
 
@@ -89,4 +91,16 @@ public interface SkillMapper {
             @Param("skillId") long skillId, @Param("displayName") String displayName, @Param("source") String source);
 
     void updateStatus(@Param("skillId") long skillId, @Param("status") String status);
+
+    List<String> selectVersionArtifactKeys(@Param("skillId") long skillId);
+
+    void deleteVersionsBySkillId(@Param("skillId") long skillId);
+
+    void deleteReactionsBySkillId(@Param("skillId") long skillId);
+
+    void deleteFavoritesBySkillId(@Param("skillId") long skillId);
+
+    void deleteCommentsBySkillId(@Param("skillId") long skillId);
+
+    void deleteSkillById(@Param("skillId") long skillId);
 }

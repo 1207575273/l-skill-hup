@@ -29,6 +29,21 @@ public class LocalFsArtifactStorage implements ArtifactStorage {
 
     public LocalFsArtifactStorage(StorageProperties properties) {
         this.root = Path.of(properties.localRoot()).toAbsolutePath().normalize();
+
+        // 启动时把**解析后的绝对路径**打出来,而不是只信任配置里那个字符串。
+        //
+        // dev 的默认值是相对路径 `./data/artifacts`,它跟着当前工作目录走 —— 从 backend/ 启动和从仓库根启动
+        // 指向两个不同的目录。踩过一次:从仓库根启动,制品全部读不到,而表现只是详情页文件树空着
+        // (读不到制品被降级成"清单为空",见 SkillApplicationService#getLatestVersionFileManifest),
+        // 界面上跟"这个包本来就没文件"长得一模一样,查了半天才定位到工作目录。
+        //
+        // 一行 INFO 就能让这类问题当场自证,所以它不是噪音。同时打出目录存不存在:不存在不算错
+        // (首次启动本来就还没有),但配合上面那条路径,足够让人一眼看出是不是启错了地方。
+        log.info(
+                "制品存储根目录已就绪, root={}, exists={}, configured={}",
+                root,
+                Files.isDirectory(root),
+                properties.localRoot());
     }
 
     @Override
@@ -59,6 +74,19 @@ public class LocalFsArtifactStorage implements ArtifactStorage {
             return Files.newInputStream(source);
         } catch (IOException e) {
             throw new UncheckedIOException("制品读取失败, artifactKey=" + artifactKey, e);
+        }
+    }
+
+    @Override
+    public void delete(String artifactKey) {
+        Path target = resolve(artifactKey);
+        try {
+            boolean removed = Files.deleteIfExists(target);
+            // 物理删除不可逆,留一条能被巡检看到的记录。removed=false 不是错误(见接口注释的幂等约定),
+            // 但它值得区分:调用方以为在删一个存在的制品,实际什么都没删。
+            log.info("制品已删除, artifactKey={}, removed={}", artifactKey, removed);
+        } catch (IOException e) {
+            throw new UncheckedIOException("制品删除失败, artifactKey=" + artifactKey, e);
         }
     }
 

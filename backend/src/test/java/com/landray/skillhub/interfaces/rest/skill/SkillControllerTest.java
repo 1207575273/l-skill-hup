@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -480,5 +481,50 @@ class SkillControllerTest {
         mockMvc.perform(post("/api/v1/skills/1/relist").header("Authorization", "Bearer " + VALID_TOKEN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("PUBLISHED"));
+    }
+
+    @Test
+    @DisplayName("管理视图:/skills/manage 不会被 /skills/{id} 抢走——字面量路径段优先于路径变量")
+    void should_routeToManageEndpoint_when_pathIsManage() throws Exception {
+        // 这条不是多余的:两个映射的第一段都是 /skills,第二段一个是字面量一个是变量。
+        // 匹配优先级搞错的话表现是 400(把 "manage" 当成 id 解析失败),而那个报错完全不指向路由。
+        stubValidSession(2L, UserRole.USER);
+        PageResult<Skill> page = new PageResult<>(List.of(sampleSkill(SkillStatus.UNLISTED)), 1L, 1, 20);
+        when(skillApplicationService.listManagedSkills(any(), isNull(), isNull(), isNull(), isNull(), isNull()))
+                .thenReturn(page);
+
+        mockMvc.perform(get("/api/v1/skills/manage").header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].status").value("UNLISTED"));
+    }
+
+    @Test
+    @DisplayName("管理视图:未登录直接 401——已下架内容不能被匿名枚举")
+    void should_rejectManageList_when_tokenMissing() throws Exception {
+        mockMvc.perform(get("/api/v1/skills/manage")).andExpect(status().isUnauthorized());
+
+        verify(skillApplicationService, never())
+                .listManagedSkills(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("删除:登录后调用 application 层,返回 204 而不是一份已不存在资源的详情")
+    void should_deleteSkill_when_tokenValid() throws Exception {
+        stubValidSession(2L, UserRole.USER);
+
+        mockMvc.perform(post("/api/v1/skills/1/delete").header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isNoContent());
+
+        verify(skillApplicationService).delete(eq(1L), any());
+    }
+
+    @Test
+    @DisplayName("删除:未登录直接 401,不进 application 层")
+    void should_rejectDelete_when_tokenMissing() throws Exception {
+        mockMvc.perform(post("/api/v1/skills/1/delete")).andExpect(status().isUnauthorized());
+
+        // 资源级的 owner/ADMIN 判断在 application 层,但"登录了没有"必须在进去之前就拦下 ——
+        // 否则未登录请求也会走到删除逻辑里,只是最后被另一处拒绝,白白多一层暴露面。
+        verify(skillApplicationService, never()).delete(anyLong(), any());
     }
 }

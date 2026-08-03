@@ -53,6 +53,9 @@ public class SkillRepositoryImpl implements SkillRepository {
         int tagCount = tagIds == null ? 0 : tagIds.size();
         String keywordPattern = LikePatternEscaper.toLikePattern(criteria.keyword());
         String sortColumn = resolveSortColumn(criteria.sort());
+        // 枚举转字符串在这一层做,与 sourceValue 同一模式:mapper 参数只用原始类型 / 集合(见 SkillMapper 类注释)。
+        List<String> statusValues =
+                criteria.statuses().stream().map(SkillStatus::name).toList();
 
         List<SkillListRow> rows = skillMapper.selectListPage(
                 sourceValue,
@@ -61,11 +64,18 @@ public class SkillRepositoryImpl implements SkillRepository {
                 criteria.certifiedOnly(),
                 keywordPattern,
                 criteria.ownerUserId(),
+                statusValues,
                 sortColumn,
                 criteria.size(),
                 criteria.offset());
         long total = skillMapper.countList(
-                sourceValue, tagIds, tagCount, criteria.certifiedOnly(), keywordPattern, criteria.ownerUserId());
+                sourceValue,
+                tagIds,
+                tagCount,
+                criteria.certifiedOnly(),
+                keywordPattern,
+                criteria.ownerUserId(),
+                statusValues);
 
         List<Long> skillIds = rows.stream().map(SkillListRow::id).toList();
         Map<Long, List<Tag>> tagsBySkillId = fetchTagsBySkillIds(skillIds);
@@ -203,6 +213,23 @@ public class SkillRepositoryImpl implements SkillRepository {
         skillMapper.updateStatus(skillId, status.name());
     }
 
+    @Override
+    public List<String> findVersionArtifactKeys(long skillId) {
+        return skillMapper.selectVersionArtifactKeys(skillId);
+    }
+
+    @Override
+    public void deleteSkillCascade(long skillId) {
+        // 先删引用方再删被引用方。本项目没有物理外键(建模原则:外键关系靠程序维护),所以数据库不会因为顺序
+        // 反了而报错 —— 正因为没有那道保险,顺序才必须在代码里写对:反过来删,中途失败会留下一批指向已消失
+        // skill 的孤儿行,而且没有任何约束会提示。
+        skillMapper.deleteVersionsBySkillId(skillId);
+        skillMapper.deleteReactionsBySkillId(skillId);
+        skillMapper.deleteFavoritesBySkillId(skillId);
+        skillMapper.deleteCommentsBySkillId(skillId);
+        skillMapper.deleteSkillById(skillId);
+    }
+
     private Map<Long, List<Tag>> fetchTagsBySkillIds(List<Long> skillIds) {
         if (skillIds.isEmpty()) {
             return Map.of();
@@ -259,7 +286,7 @@ public class SkillRepositoryImpl implements SkillRepository {
                 null,
                 new SkillOwner(row.ownerUserId(), row.ownerDisplayName(), row.ownerEmployeeNo()),
                 row.cardExcerpt(),
-                SkillStatus.PUBLISHED,
+                row.status(),
                 row.downloadCount(),
                 row.likeCount(),
                 0,

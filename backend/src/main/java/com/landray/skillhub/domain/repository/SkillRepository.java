@@ -100,6 +100,23 @@ public interface SkillRepository {
     /** 改 displayName / source,不改 name(业务建模文档 5.16:name 一经创建不可修改)。 */
     void updateMetadata(long skillId, String displayName, SkillSource source);
 
+    /**
+     * 该 skill 全部版本的 {@code artifact_key}。
+     *
+     * <p>唯一使用者是物理删除:删库之前必须先把键取出来,否则行没了就再也不知道该删哪些文件,制品会永久残留。
+     * <b>调用顺序不能反</b>,这一条在 {@code SkillApplicationService#delete} 里有注释钉住。
+     */
+    List<String> findVersionArtifactKeys(long skillId);
+
+    /**
+     * 物理删除 skill 及其版本 / 表态 / 收藏 / 评论行。<b>不可逆。</b>
+     *
+     * <p>不含 {@code skill_tag}:标签行由 {@code SkillTagAssignmentService#replaceSkillTags(skillId, [])} 清,
+     * 那里同时承载"删掉本次失去全部引用的 FREE 标签"这条规则(业务建模文档 5.7)。规则只写一处,
+     * 免得删除路径漏掉孤儿清理,让 {@code /tags/suggest} 把死词条推给用户。
+     */
+    void deleteSkillCascade(long skillId);
+
     /** 下架 / 恢复,只改 status,不动版本、评论、表态、收藏(业务建模文档 5.15)。 */
     void updateStatus(long skillId, SkillStatus status);
 }

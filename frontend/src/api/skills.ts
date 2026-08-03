@@ -1,5 +1,6 @@
 import { API_BASE_URL, apiGet, apiPost, apiPostFormData } from './client'
 import type {
+  ManagedSkill,
   PageResponse,
   SkillDetail,
   SkillFileContent,
@@ -140,6 +141,44 @@ export function unlistSkill(skillId: number): Promise<SkillDetail> {
 /** `POST /skills/{id}/relist`(需登录,owner/ADMIN),恢复上架。 */
 export function relistSkill(skillId: number): Promise<SkillDetail> {
   return apiPost<SkillDetail>(`/skills/${skillId}/relist`)
+}
+
+/**
+ * `GET /skills/manage`(需登录),管理视图列表:**含已下架**。
+ *
+ * 刻意不接受 `ownerUserId` 参数 —— 作用域由服务端按当前身份决定(自己的 / ADMIN 看全部)。
+ * 前端能传的话,那个参数就成了越权入口,而且前端传什么都不影响服务端的判定,徒增误解。
+ */
+export interface ManagedSkillFilter {
+  /** 不传表示两种状态都要 —— 这个页面的存在理由就是"下架之后还能找到它"。 */
+  readonly status?: 'PUBLISHED' | 'UNLISTED'
+  readonly keyword?: string
+  readonly page?: number
+  readonly size?: number
+}
+
+export function fetchManagedSkills(
+  filter: ManagedSkillFilter = {},
+  options?: AbortableOptions,
+): Promise<PageResponse<ManagedSkill>> {
+  return apiGet<PageResponse<ManagedSkill>>('/skills/manage', {
+    query: {
+      status: filter.status,
+      keyword: filter.keyword,
+      page: filter.page,
+      size: filter.size,
+    },
+    signal: options?.signal,
+  })
+}
+
+/**
+ * `POST /skills/{id}/delete`(需登录,owner/ADMIN),**物理删除,不可逆**。
+ *
+ * 返回 204 无响应体 —— 资源已经不存在了,再回一份它的详情是在描述一个不存在的东西。
+ */
+export function deleteSkill(skillId: number): Promise<void> {
+  return apiPost<void>(`/skills/${skillId}/delete`)
 }
 
 /**

@@ -18,6 +18,7 @@ import com.landray.skillhub.domain.model.SkillVersion;
 import com.landray.skillhub.domain.model.SkillVersionFile;
 import com.landray.skillhub.domain.model.SkillVersionFileContent;
 import com.landray.skillhub.domain.model.SkillVersionFilePreviewer;
+import com.landray.skillhub.domain.model.UserRole;
 import com.landray.skillhub.domain.repository.SkillRepository;
 import com.landray.skillhub.domain.service.SkillArtifactManifestReader;
 import com.landray.skillhub.domain.storage.ArtifactStorage;
@@ -97,6 +98,59 @@ public class SkillApplicationService {
                 page,
                 size);
         return skillRepository.search(criteria);
+    }
+
+    /**
+     * 管理视图的 skill 列表:<b>含已下架</b>,给管理页用。
+     *
+     * <p><b>为什么不是给 {@code listSkills} 加一个 {@code status} 参数,而是单开一个方法。</b>公开列表是匿名可用的,
+     * 一旦它能接收 status,今后每次改那条链路都得重新论证一遍"这个调用方能不能看到下架内容",而这种论证迟早会
+     * 有人漏掉 —— 漏掉的后果是把下架内容泄漏给所有人。单开一个方法则只有一条无条件规则:必须登录,且作用域被
+     * 强制收窄,没有任何分支可走错。
+     *
+     * <p><b>ownerUserId 由服务端按当前身份强制覆盖,不接受调用方传入。</b>非 ADMIN 一律只能看自己的;ADMIN 才
+     * 看得到全部。让前端传 ownerUserId 等于把"我是谁"交给客户端声明,那是最典型的越权入口。
+     */
+    @Transactional(readOnly = true)
+    public PageResult<Skill> listManagedSkills(
+            AuthenticatedUser actingUser,
+            String statusParam,
+            String keyword,
+            String sortParam,
+            Integer pageParam,
+            Integer sizeParam) {
+        Long scopedOwnerUserId = actingUser.role() == UserRole.ADMIN ? null : actingUser.userId();
+        SkillSearchCriteria criteria = new SkillSearchCriteria(
+                null,
+                List.of(),
+                false,
+                keyword,
+                scopedOwnerUserId,
+                resolveManagedStatuses(statusParam),
+                SkillSortOption.fromParam(sortParam),
+                normalizePage(pageParam),
+                normalizeSize(sizeParam));
+
+        log.debug(
+                "查询管理视图 skill 列表, operator={}, scopedOwnerUserId={}, statuses={}, page={}",
+                actingUser.userId(),
+                scopedOwnerUserId,
+                criteria.statuses(),
+                criteria.page());
+        return skillRepository.search(criteria);
+    }
+
+    /**
+     * 管理视图的状态筛选:不传 = 两种都要。
+     *
+     * <p>默认给全集而不是默认 {@code PUBLISHED},因为这个页面的存在理由就是"下架之后还能找到它"——
+     * 默认只显示已发布,等于把这个页面唯一的独占能力藏在一次筛选点击之后。
+     */
+    private List<SkillStatus> resolveManagedStatuses(String statusParam) {
+        if (statusParam == null || statusParam.isBlank()) {
+            return List.of(SkillStatus.PUBLISHED, SkillStatus.UNLISTED);
+        }
+        return List.of(SkillStatus.fromParam(statusParam));
     }
 
     @Transactional(readOnly = true)
@@ -227,6 +281,63 @@ public class SkillApplicationService {
     @Transactional
     public Skill relist(long skillId, AuthenticatedUser actingUser) {
         return changeStatus(skillId, SkillStatus.PUBLISHED, actingUser);
+    }
+
+    /**
+     * 物理删除 skill(owner / ADMIN)。<b>不可逆,没有回收站。</b>
+     *
+     * <p>业务建模文档 4.8 原本写着"不提供物理删除",理由是 skill 一旦被人装过就有了外部引用。这条已按需求推翻,
+     * 但那个理由依然成立,所以代价必须被正面处理:已流传的安装单在渲染时会明确打印"该 skill 已被删除,跳过",
+     * 而不是静默少装几个(见 {@code InstallApplicationService})。
+     *
+     * <p><b>三段顺序都是承重的,不能调换:</b>
+     *
+     * <ol>
+     *   <li><b>先取 artifactKey。</b>删完库行就再也不知道该删哪些文件,制品会永久残留在磁盘上,而且没有任何报错。
+     *   <li><b>再删库行(同一事务)。</b>标签走 {@code replaceSkillTags(skillId, [])},复用孤儿 FREE 标签的清理
+     *       规则(5.7),不在这里重写一遍。
+     *   <li><b>最后删制品文件,而且只做尽力而为。</b>反过来先删文件的话,库操作一旦失败就留下一个查得到、装不了的
+     *       skill —— 那比留几个孤儿文件糟得多。文件删不掉只记 WARN 不抛异常:此刻库行已经删了,再把异常抛给
+     *       调用方,前端会显示"删除失败"而实际上已经删掉了,那是最容易让人做出错误后续动作的一种反馈。
+     * </ol>
+     */
+    @Transactional
+    public void delete(long skillId, AuthenticatedUser actingUser) {
+        Skill skill = skillRepository.findDetailById(skillId).orElseThrow(() -> notFound(skillId));
+        requireOwnerOrAdmin(skill, actingUser);
+
+        List<String> artifactKeys = skillRepository.findVersionArtifactKeys(skillId);
+        tagAssignmentService.replaceSkillTags(skillId, List.of());
+        skillRepository.deleteSkillCascade(skillId);
+
+        // 物理删除比下架烈度高一档:下架可恢复,这个不可以。审计日志按 WARN 记,并且带上 name 与版本数——
+        // 事后追查时 skillId 已经查不到任何东西了,只有当时记下来的名字还能对上人。
+        log.warn(
+                "skill 已被物理删除, skillId={}, name={}, versionCount={}, operator={}",
+                skillId,
+                skill.name().value(),
+                artifactKeys.size(),
+                actingUser.userId());
+        auditLog.info(
+                "skill 物理删除, event={}, skillId={}, name={}, versionCount={}, operator={}",
+                "skill_deleted",
+                skillId,
+                skill.name().value(),
+                artifactKeys.size(),
+                actingUser.userId());
+
+        deleteArtifactsBestEffort(artifactKeys, skillId);
+    }
+
+    private void deleteArtifactsBestEffort(List<String> artifactKeys, long skillId) {
+        for (String artifactKey : artifactKeys) {
+            try {
+                artifactStorage.delete(artifactKey);
+            } catch (RuntimeException e) {
+                // 单个文件删不掉不能中断整轮:剩下的文件照删,少留一个是一个。
+                log.warn("制品删除失败,已留下孤儿文件, skillId={}, artifactKey={}", skillId, artifactKey, e);
+            }
+        }
     }
 
     private Skill changeStatus(long skillId, SkillStatus status, AuthenticatedUser actingUser) {

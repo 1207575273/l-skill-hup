@@ -7,6 +7,10 @@ export interface ModalAction {
   readonly label: string
   readonly onClick: () => void
   readonly variant?: ButtonVariant
+  /** 前置条件未满足时禁用,例如删除确认要求先把 skill 名字输对。 */
+  readonly disabled?: boolean
+  /** 提交进行中。禁用交互并把图标换成 Spinner,避免重复提交同一个不可逆动作。 */
+  readonly loading?: boolean
 }
 
 export interface ModalProps {
@@ -85,6 +89,8 @@ export function Modal({ open, title, onClose, children, actions }: ModalProps) {
                 key={action.label}
                 variant={action.variant ?? 'secondary'}
                 onClick={action.onClick}
+                disabled={action.disabled ?? false}
+                loading={action.loading ?? false}
               >
                 {action.label}
               </Button>

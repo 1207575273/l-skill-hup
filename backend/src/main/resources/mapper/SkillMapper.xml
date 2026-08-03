@@ -23,7 +23,15 @@
     -->
     <sql id="skillListFilter">
         <where>
-            s.status = 'PUBLISHED'
+            <!--
+              状态一律由调用方显式给。以前这里写死 'PUBLISHED',结果 skill 一下架就从**所有**列表里消失,
+              连作者自己都找不回来,只能靠直达链接。SkillSearchCriteria 的空集合校验保证这里的 foreach
+              不会退化成空条件(那会变成不带状态过滤的全量查询,把下架内容泄漏到公开列表)。
+            -->
+            s.status IN
+            <foreach item="statusValue" collection="statuses" open="(" separator="," close=")">
+                #{statusValue}
+            </foreach>
             <if test="source != null">
                 AND s.source = #{source}
             </if>
@@ -62,6 +70,12 @@
             s.name                  AS name,
             s.display_name          AS display_name,
             s.card_excerpt          AS card_excerpt,
+            <!--
+              status 必须选出来。以前不选是因为过滤条件写死了 status='PUBLISHED',查出来的必然都已发布,
+              于是 SkillRepositoryImpl 直接填了个常量 PUBLISHED —— 那在当时是等价的。
+              管理视图放开状态筛选之后,那个常量就成了谎话:库里 UNLISTED 的行读回来是 PUBLISHED。
+            -->
+            s.status                AS status,
             s.download_count        AS download_count,
             s.like_count            AS like_count,
             s.favorite_count        AS favorite_count,
@@ -322,5 +336,34 @@
     <update id="updateStatus">
         UPDATE skill SET status = #{status} WHERE id = #{skillId}
     </update>
+
+    <!--
+      物理删除相关。拆成六条单表语句而不是一条带子查询的删除,是为了让"到底删了哪几张表"在代码里一眼可数 ——
+      这里漏一张表不会报任何错,只会留下永远查不到主体的孤儿行,而孤儿行往往要到某次统计或迁移时才暴露。
+      新增引用 skill 的表时,必须回到这里补一条,并同步补 SkillRepositoryImplIntegrationTest 的断言。
+    -->
+    <select id="selectVersionArtifactKeys" resultType="java.lang.String">
+        SELECT artifact_key FROM skill_version WHERE skill_id = #{skillId}
+    </select>
+
+    <delete id="deleteVersionsBySkillId">
+        DELETE FROM skill_version WHERE skill_id = #{skillId}
+    </delete>
+
+    <delete id="deleteReactionsBySkillId">
+        DELETE FROM skill_reaction WHERE skill_id = #{skillId}
+    </delete>
+
+    <delete id="deleteFavoritesBySkillId">
+        DELETE FROM skill_favorite WHERE skill_id = #{skillId}
+    </delete>
+
+    <delete id="deleteCommentsBySkillId">
+        DELETE FROM skill_comment WHERE skill_id = #{skillId}
+    </delete>
+
+    <delete id="deleteSkillById">
+        DELETE FROM skill WHERE id = #{skillId}
+    </delete>
 
 </mapper>

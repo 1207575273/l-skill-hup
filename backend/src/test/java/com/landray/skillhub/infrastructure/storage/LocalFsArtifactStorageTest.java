@@ -105,6 +105,39 @@ class LocalFsArtifactStorageTest {
     }
 
     @Test
+    void should_removeArtifact_whenDeleted() {
+        LocalFsArtifactStorage storage = storageAt(tempRoot);
+        storage.store("code-review/1.0.0.zip", new byte[] {1});
+
+        storage.delete("code-review/1.0.0.zip");
+
+        assertThat(storage.exists("code-review/1.0.0.zip")).isFalse();
+    }
+
+    @Test
+    void should_notThrow_whenDeletingMissingKey() {
+        // 删除做成幂等:调用方是"skill 已经从库里删掉了,现在收尾删文件"。此时文件不在(上次删了一半、
+        // 或制品从来没落成功)不是错误 —— 目标状态已经达成。抛异常只会让收尾流程半途而废,
+        // 反而留下更多孤儿文件。
+        LocalFsArtifactStorage storage = storageAt(tempRoot);
+
+        storage.delete("never-stored.zip");
+
+        assertThat(storage.exists("never-stored.zip")).isFalse();
+    }
+
+    @Test
+    void should_rejectKey_whenDeletingWithTraversal() {
+        // delete 与 store / openRead 走同一套 key 校验。少一处就等于开了一个"用删除做目录穿越"的口子,
+        // 而删除的破坏力比读取更大。
+        LocalFsArtifactStorage storage = storageAt(tempRoot);
+
+        assertThatThrownBy(() -> storage.delete("../escaped.zip"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("相对路径");
+    }
+
+    @Test
     void should_rejectKey_whenContainingParentTraversal() {
         LocalFsArtifactStorage storage = storageAt(tempRoot);
 

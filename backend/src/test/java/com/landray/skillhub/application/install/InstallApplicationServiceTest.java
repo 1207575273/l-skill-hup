@@ -23,6 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.landray.skillhub.domain.exception.ClientScopeNotSupportedException;
 import com.landray.skillhub.domain.exception.InstallBundleExpiredException;
+import com.landray.skillhub.domain.exception.InstallBundleItemsGoneException;
 import com.landray.skillhub.domain.model.Certification;
 import com.landray.skillhub.domain.model.ClientCode;
 import com.landray.skillhub.domain.model.InstallBundle;
@@ -259,5 +260,25 @@ class InstallApplicationServiceTest {
         RenderedScript script = service.renderPowerShell("valid-token", "127.0.0.1");
 
         assertThat(script.content()).contains("code-review");
+        // 跳过归跳过,但必须在脚本里说出来。生成安装单时 validateItemsResolvable 已经确保每一条都存在,
+        // 所以此刻解析不到只有一个原因:那个 skill 在这之后被物理删除了。
+        assertThat(script.content()).contains("有 1 个 skill 已从平台删除");
+    }
+
+    @Test
+    @DisplayName("安装单里的 skill 全被删除时返回 410,而不是渲染一个什么都不装的脚本")
+    void should_throwItemsGone_when_everyItemDeleted() {
+        InstallBundle bundle = new InstallBundle(
+                1L, "valid-token",
+                List.of(new InstallItem(1L, 10L)), ClientCode.CLAUDE,
+                InstallScope.GLOBAL, null, Instant.now(), Instant.now().plusSeconds(3600));
+        when(installBundleRepository.findByToken("valid-token")).thenReturn(Optional.of(bundle));
+        when(skillArtifactRepository.findByVersionIds(any())).thenReturn(List.of());
+
+        // 之前这里会掉进 requireNonEmpty 的 IllegalStateException,最终是 500 加一句
+        // "渲染安装脚本时制品列表不能为空" —— 对着一条群里流传的安装命令,这句话什么也解释不了。
+        // 410 与"安装单已过期"对齐:资源曾经有效、现在不再有效,正确的下一步都是回平台重新生成。
+        assertThatThrownBy(() -> service.renderPowerShell("valid-token", "127.0.0.1"))
+                .isInstanceOf(InstallBundleItemsGoneException.class);
     }
 }

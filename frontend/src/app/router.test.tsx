@@ -37,6 +37,12 @@ function renderAt(path: string) {
   })
   vi.mocked(installApi.fetchInstallClients).mockResolvedValue([])
   vi.mocked(skillsApi.fetchSkillList).mockResolvedValue({ items: [], total: 0, page: 1, size: 20 })
+  vi.mocked(skillsApi.fetchManagedSkills).mockResolvedValue({
+    items: [],
+    total: 0,
+    page: 1,
+    size: 20,
+  })
   vi.mocked(tagsApi.fetchTags).mockResolvedValue([])
   // 详情刻意挂起不 resolve:这组测试只想确认 /skills/:id 落到了详情页,
   // 让它停在加载态就够了,给假数据反而要维护一份与页面耦合的 fixture。
@@ -98,6 +104,13 @@ describe('AppRouter', () => {
     // providers mock 里 localRegisterEnabled 为 false,所以渲染的是"未开放"说明而不是表单。
     // 这条要验的是"路由挂上了",不是注册表单本身(那由 RegisterPage.test.tsx 覆盖)。
     expect(await screen.findByText('注册未开放')).toBeInTheDocument()
+  })
+
+  it('should_render_manage_page_when_path_is_/manage', async () => {
+    // renderAt 里已经设了 token 并 mock 了 /auth/me,所以这里落到真正的管理页而不是引导登录页。
+    renderAt('/manage')
+
+    expect(await screen.findByRole('heading', { level: 1, name: '管理 skill' })).toBeInTheDocument()
   })
 
   it('should_render_install_page_when_path_is_/install', () => {

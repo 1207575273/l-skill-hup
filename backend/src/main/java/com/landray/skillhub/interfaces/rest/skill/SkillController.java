@@ -6,12 +6,14 @@ import java.util.List;
 
 import jakarta.validation.Valid;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -63,6 +65,26 @@ public class SkillController {
         PageResult<Skill> result = skillApplicationService.listSkills(
                 source, tagIds, certifiedOnly, keyword, ownerUserId, sort, page, size);
         return result.map(SkillSummaryResponse::from);
+    }
+
+    /**
+     * 管理视图列表:含已下架,给管理页用(owner 只看自己的,ADMIN 看全部)。
+     *
+     * <p><b>刻意不收 ownerUserId 参数。</b>作用域由服务端按当前身份强制决定 —— 收下这个参数就等于让客户端声明
+     * "我要看谁的",而那是越权最常见的入口。路径放在 {@code /{id}} 之前,免得 {@code manage} 被当成 id 匹配掉。
+     */
+    @RequireLogin
+    @GetMapping("/manage")
+    public PageResult<ManagedSkillResponse> listManagedSkills(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size) {
+        AuthenticatedUser actingUser = currentUserAccessor.require();
+        PageResult<Skill> result =
+                skillApplicationService.listManagedSkills(actingUser, status, keyword, sort, page, size);
+        return result.map(ManagedSkillResponse::from);
     }
 
     @GetMapping("/{id}")
@@ -161,6 +183,20 @@ public class SkillController {
     public SkillDetailResponse relistSkill(@PathVariable long id) {
         AuthenticatedUser actingUser = currentUserAccessor.require();
         return SkillDetailResponse.from(skillApplicationService.relist(id, actingUser));
+    }
+
+    /**
+     * 物理删除,不可逆(owner / ADMIN)。
+     *
+     * <p>与上下架不同,这里<b>不能返回 SkillDetailResponse</b> —— 资源已经不存在了,再回一份它的详情是在描述
+     * 一个不存在的东西。返回 204,让"没有内容"这件事由状态码说清楚。
+     */
+    @RequireLogin
+    @PostMapping("/{id}/delete")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteSkill(@PathVariable long id) {
+        AuthenticatedUser actingUser = currentUserAccessor.require();
+        skillApplicationService.delete(id, actingUser);
     }
 
     private byte[] readBytes(MultipartFile file) {

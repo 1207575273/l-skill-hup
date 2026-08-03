@@ -47,7 +47,7 @@ class InstallScriptRendererTest {
     void should_embedLowercaseSha256AndDownloadUrl_when_renderingPowerShell() {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains(SHA256_UPPER.toLowerCase(java.util.Locale.ROOT));
         assertThat(script).contains(PUBLIC_BASE_URL + "/api/v1/skills/1/versions/1.2.0/download");
@@ -62,7 +62,7 @@ class InstallScriptRendererTest {
         // 实测就是这个结果,而这样装出来 Agent 找不到 SKILL.md,skill 等于没装上。
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("unzip -q \"$tmp_file\" -d \"$SKILLS_ROOT\"");
         assertThat(script).doesNotContain("-d \"$target_dir\"");
@@ -72,7 +72,7 @@ class InstallScriptRendererTest {
     void should_extractIntoSkillsRootNotIntoSkillDir_when_renderingPowerShell() {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("-DestinationPath $SkillsRoot");
         assertThat(script).doesNotContain("-DestinationPath $targetDir");
@@ -85,7 +85,7 @@ class InstallScriptRendererTest {
         // 用户根本没有机会按 y。必须显式从 /dev/tty 读。
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("< /dev/tty");
         assertThat(script).doesNotContain("read -r -p");
@@ -98,7 +98,7 @@ class InstallScriptRendererTest {
         // 这个坑不提示的话没人猜得到。
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("sh -s -- --yes");
         assertThat(script).contains("exit 1");
@@ -111,7 +111,7 @@ class InstallScriptRendererTest {
         // 这条路径在单测里跑不到(渲染出来的是文本,不会真去解压),所以只能盯住渲染结果本身。
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         // 断言的是**赋值语句**而不是 "GetTempFileName" 这个词 —— 模板注释里要解释为什么不用它,
         // 按词禁会把解释本身也判成违规。
@@ -124,7 +124,7 @@ class InstallScriptRendererTest {
     void should_useHomeDirectory_when_scopeIsGlobal() {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("Join-Path $HOME '.claude/skills'");
     }
@@ -133,7 +133,7 @@ class InstallScriptRendererTest {
     void should_useCurrentWorkingDirectory_when_scopeIsProject() {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CODEX, InstallScope.PROJECT),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("Join-Path (Get-Location).Path '.codex/skills'");
     }
@@ -142,7 +142,7 @@ class InstallScriptRendererTest {
     void should_includeBackupLogicBeforeOverwrite_when_renderingPowerShell() {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains(".bak.");
         assertThat(script).contains("Move-Item -Path $targetDir -Destination $backupDir -Force");
@@ -152,7 +152,7 @@ class InstallScriptRendererTest {
     void should_requireForceFlagAndPrintNote_when_anyArtifactIsRevoked() {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "存在安全隐患")), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "存在安全隐患")), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("已被撤销");
         assertThat(script).contains("存在安全隐患");
@@ -164,7 +164,7 @@ class InstallScriptRendererTest {
     void should_notMentionForceOrRevoked_when_noArtifactIsRevoked() {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.CERTIFIED, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.CERTIFIED, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).doesNotContain("已被撤销");
         assertThat(script).doesNotContain("HasRevoked");
@@ -174,7 +174,7 @@ class InstallScriptRendererTest {
     void should_printNoticeButNotAbort_when_skillIsUnlisted() {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.UNLISTED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.UNLISTED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("已下架");
         assertThat(script).contains("Install-OneSkill -Name 'code-review'");
@@ -188,7 +188,7 @@ class InstallScriptRendererTest {
     void should_escapeSingleQuoteInCertifyNote_when_renderingPowerShell() {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "it's unsafe")), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "it's unsafe")), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("it''s unsafe");
     }
@@ -198,7 +198,7 @@ class InstallScriptRendererTest {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
                 List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "line1\r\nline2\r\n")),
-                PUBLIC_BASE_URL);
+                PUBLIC_BASE_URL, 0);
 
         assertThat(script).doesNotContain("\r");
         assertThat(script).contains("line1 line2");
@@ -207,7 +207,7 @@ class InstallScriptRendererTest {
     @Test
     void should_throw_when_powerShellArtifactListIsEmpty() {
         assertThatThrownBy(() -> InstallScriptRenderer.renderPowerShell(
-                        bundle(ClientCode.CLAUDE, InstallScope.GLOBAL), List.of(), PUBLIC_BASE_URL))
+                        bundle(ClientCode.CLAUDE, InstallScope.GLOBAL), List.of(), PUBLIC_BASE_URL, 0))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -218,7 +218,7 @@ class InstallScriptRendererTest {
                 SkillStatus.PUBLISHED, Certification.NONE, null);
 
         assertThatThrownBy(() -> InstallScriptRenderer.renderPowerShell(
-                        bundle(ClientCode.CLAUDE, InstallScope.GLOBAL), List.of(unsafeVersion), PUBLIC_BASE_URL))
+                        bundle(ClientCode.CLAUDE, InstallScope.GLOBAL), List.of(unsafeVersion), PUBLIC_BASE_URL, 0))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -229,7 +229,7 @@ class InstallScriptRendererTest {
                 Certification.NONE, null);
 
         assertThatThrownBy(() -> InstallScriptRenderer.renderPowerShell(
-                        bundle(ClientCode.CLAUDE, InstallScope.GLOBAL), List.of(unsafeName), PUBLIC_BASE_URL))
+                        bundle(ClientCode.CLAUDE, InstallScope.GLOBAL), List.of(unsafeName), PUBLIC_BASE_URL, 0))
                 .isInstanceOf(InvalidSkillNameException.class);
     }
 
@@ -243,7 +243,7 @@ class InstallScriptRendererTest {
                 new InstallBundle(
                         1L, "sample-token-value", List.of(new InstallItem(1L, 10L), new InstallItem(2L, 20L)),
                         ClientCode.CLAUDE, InstallScope.GLOBAL, null, CREATED_AT, EXPIRES_AT),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null), second), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null), second), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("Install-OneSkill -Name 'code-review'");
         assertThat(script).contains("Install-OneSkill -Name 'another-skill'");
@@ -255,7 +255,7 @@ class InstallScriptRendererTest {
     void should_notContainCarriageReturn_when_renderingBash() {
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "含 \r\n 换行的理由")), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "含 \r\n 换行的理由")), PUBLIC_BASE_URL, 0);
 
         assertThat(script).doesNotContain("\r");
     }
@@ -264,7 +264,7 @@ class InstallScriptRendererTest {
     void should_startWithShebangAndStrictMode_when_renderingBash() {
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).startsWith("#!/usr/bin/env bash\n");
         assertThat(script).contains("set -euo pipefail");
@@ -274,7 +274,7 @@ class InstallScriptRendererTest {
     void should_embedLowercaseSha256AndDownloadUrl_when_renderingBash() {
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains(SHA256_UPPER.toLowerCase(java.util.Locale.ROOT));
         assertThat(script).contains(PUBLIC_BASE_URL + "/api/v1/skills/1/versions/1.2.0/download");
@@ -285,7 +285,7 @@ class InstallScriptRendererTest {
     void should_useHomeDirectory_when_bashScopeIsGlobal() {
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("SKILLS_ROOT=\"$HOME/.claude/skills\"");
     }
@@ -294,7 +294,7 @@ class InstallScriptRendererTest {
     void should_useCurrentWorkingDirectory_when_bashScopeIsProject() {
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CODEX, InstallScope.PROJECT),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("SKILLS_ROOT=\"$(pwd)/.codex/skills\"");
     }
@@ -303,7 +303,7 @@ class InstallScriptRendererTest {
     void should_includeBackupLogicBeforeOverwrite_when_renderingBash() {
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains(".bak.");
         assertThat(script).contains("mv \"$target_dir\" \"$backup_dir\"");
@@ -313,7 +313,7 @@ class InstallScriptRendererTest {
     void should_requireForceFlagAndPrintNote_when_anyArtifactIsRevokedInBash() {
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "存在安全隐患")), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "存在安全隐患")), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("已被撤销");
         assertThat(script).contains("存在安全隐患");
@@ -325,7 +325,7 @@ class InstallScriptRendererTest {
     void should_printNoticeButNotAbort_when_skillIsUnlistedInBash() {
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.UNLISTED, Certification.NONE, null)), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.UNLISTED, Certification.NONE, null)), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("已下架");
         assertThat(script).contains("install_one_skill 'code-review'");
@@ -337,7 +337,7 @@ class InstallScriptRendererTest {
     void should_escapeSingleQuoteInCertifyNote_when_renderingBash() {
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
-                List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "it's unsafe")), PUBLIC_BASE_URL);
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "it's unsafe")), PUBLIC_BASE_URL, 0);
 
         assertThat(script).contains("it'\"'\"'s unsafe");
     }
@@ -345,7 +345,7 @@ class InstallScriptRendererTest {
     @Test
     void should_throw_when_bashArtifactListIsEmpty() {
         assertThatThrownBy(() -> InstallScriptRenderer.renderBash(
-                        bundle(ClientCode.CLAUDE, InstallScope.GLOBAL), List.of(), PUBLIC_BASE_URL))
+                        bundle(ClientCode.CLAUDE, InstallScope.GLOBAL), List.of(), PUBLIC_BASE_URL, 0))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -361,7 +361,7 @@ class InstallScriptRendererTest {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
                 List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "有远程执行风险")),
-                PUBLIC_BASE_URL);
+                PUBLIC_BASE_URL, 0);
 
         assertThat(script.indexOf("已被撤销")).isLessThan(script.indexOf("确认安装以上 skill"));
     }
@@ -371,8 +371,56 @@ class InstallScriptRendererTest {
         String script = InstallScriptRenderer.renderBash(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
                 List.of(artifact(SkillStatus.PUBLISHED, Certification.REVOKED, "有远程执行风险")),
-                PUBLIC_BASE_URL);
+                PUBLIC_BASE_URL, 0);
 
         assertThat(script.indexOf("已被撤销")).isLessThan(script.indexOf("确认安装以上 skill"));
+    }
+
+    // ---------- 条目在生成安装单之后被物理删除 ----------
+
+    // 明说跳过了几个,不静默少装 —— 安装单的语义是"把我勾的这几个装上",
+    // 少装而不说,用户要到某次 Agent 找不到 skill 时才发现,那时已经对不上原因了。
+    @Test
+    void should_noticeDeletedItems_when_renderingPowerShell() {
+        String script = InstallScriptRenderer.renderPowerShell(
+                bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)),
+                PUBLIC_BASE_URL, 2);
+
+        assertThat(script).contains("有 2 个 skill 已从平台删除");
+    }
+
+    // 两个脚本的行为必须一致:PowerShell 是一等公民,不许只测一份(根 CLAUDE.md 8.5)。
+    @Test
+    void should_noticeDeletedItems_when_renderingBash() {
+        String script = InstallScriptRenderer.renderBash(
+                bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)),
+                PUBLIC_BASE_URL, 1);
+
+        assertThat(script).contains("有 1 个 skill 已从平台删除");
+    }
+
+    // 正常安装不该出现无关噪音:提示只在真有条目被删时出现,否则它很快会被当成模板文字忽略掉。
+    @Test
+    void should_omitDeletedNotice_when_nothingDeleted() {
+        String script = InstallScriptRenderer.renderBash(
+                bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)),
+                PUBLIC_BASE_URL, 0);
+
+        assertThat(script).doesNotContain("已从平台删除");
+    }
+
+    // 提示必须排在确认之前,与撤销认证同一条理由:排在后面的话,用户是先按下 y、之后才看到
+    // "有几个装不了",那次确认就是不知情的。
+    @Test
+    void should_placeDeletedNoticeBeforeConfirmation_when_renderingBash() {
+        String script = InstallScriptRenderer.renderBash(
+                bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)),
+                PUBLIC_BASE_URL, 1);
+
+        assertThat(script.indexOf("已从平台删除")).isLessThan(script.indexOf("确认安装以上 skill"));
     }
 }

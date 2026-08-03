@@ -93,8 +93,18 @@ const SOURCE_OPTIONS: ReadonlyArray<SelectOption<SkillSource>> = [
   { value: 'COMMUNITY', label: '社区' },
 ]
 
+/**
+ * 版本号默认值。绝大多数上传是"发布一个新 skill",而新 skill 的第一个版本按惯例就是 1.0.0 ——
+ * 让人每次手打一遍是纯粹的摩擦。
+ *
+ * <p>给默认值而不是"留空时后端兜底":留空的话表单校验必须放行空值,而那条校验同时也在拦
+ * "1.0" 这类非 SemVer 输入,放行空值就等于给它开了个特例。预填一个合法值,校验规则保持单一,
+ * 想发别的版本直接改掉即可。
+ */
+const DEFAULT_VERSION = '1.0.0'
+
 const INITIAL_FORM_STATE: PublishFormState = {
-  version: '',
+  version: DEFAULT_VERSION,
   displayName: '',
   source: 'INTERNAL',
   curatedTagIds: [],

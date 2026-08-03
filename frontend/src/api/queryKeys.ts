@@ -23,6 +23,12 @@ export const skillKeys = {
   all: ['skills'] as const,
   lists: () => [...skillKeys.all, 'list'] as const,
   list: (filter: SkillListFilter) => [...skillKeys.lists(), filter] as const,
+  /**
+   * 管理视图列表。**必须与公开列表 `lists()` 分开**:两者返回的集合不同(管理视图含已下架),
+   * 共用一个 key 会让下架后的公开列表读到带下架项的缓存,反之亦然。
+   */
+  managed: (filter: unknown) => [...skillKeys.all, 'managed', filter] as const,
+  managedAll: () => [...skillKeys.all, 'managed'] as const,
   details: () => [...skillKeys.all, 'detail'] as const,
   detail: (id: number) => [...skillKeys.details(), id] as const,
   versions: (id: number) => [...skillKeys.detail(id), 'versions'] as const,

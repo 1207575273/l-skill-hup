@@ -86,6 +86,9 @@ class SkillRepositoryImplIntegrationTest {
         try (Connection connection = dataSource.getConnection();
                 Statement statement = connection.createStatement()) {
             statement.execute("DELETE FROM skill_tag");
+            statement.execute("DELETE FROM skill_reaction");
+            statement.execute("DELETE FROM skill_favorite");
+            statement.execute("DELETE FROM skill_comment");
             statement.execute("DELETE FROM skill_version");
             statement.execute("DELETE FROM skill");
             statement.execute("DELETE FROM tag WHERE kind = 'FREE'");
@@ -108,6 +111,58 @@ class SkillRepositoryImplIntegrationTest {
             assertThat(result.items()).extracting(skill -> skill.name().value()).containsExactly("published-skill");
             assertThat(result.total()).isEqualTo(1L);
         }
+    }
+
+    @Test
+    @DisplayName("statuses 只给 UNLISTED 时,只返回已下架的——管理页的状态筛选就靠这条")
+    void should_returnOnlyUnlisted_whenStatusFilterIsUnlisted() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long published = insertSkill(c, "published-skill", "已发布", "INTERNAL", owner, "PUBLISHED");
+            long unlisted = insertSkill(c, "unlisted-skill", "已下架", "INTERNAL", owner, "UNLISTED");
+            attachVersion(c, published, "1.0.0", NONE);
+            attachVersion(c, unlisted, "1.0.0", NONE);
+
+            PageResult<Skill> result = skillRepository.search(criteriaWithStatuses(List.of(SkillStatus.UNLISTED)));
+
+            assertThat(result.items()).extracting(skill -> skill.name().value()).containsExactly("unlisted-skill");
+            assertThat(result.total()).isEqualTo(1L);
+            // **必须断言 status 本身,不能只断言查出来的是哪几行。**
+            // 这条差点漏掉:第一版只验了 name,而当时 SkillRepositoryImpl 把列表行的 status 写死成
+            // PUBLISHED —— 筛选完全正确(确实只返回了 unlisted-skill),但读回来的对象说自己是已发布。
+            // 界面上表现为"下架了但状态没变、按钮也不变",而测试全绿。
+            assertThat(result.items()).extracting(Skill::status).containsExactly(SkillStatus.UNLISTED);
+        }
+    }
+
+    @Test
+    @DisplayName("statuses 给两个值时两种都返回——管理页默认的『全部』")
+    void should_returnBothStatuses_whenStatusFilterHasBoth() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long published = insertSkill(c, "published-skill", "已发布", "INTERNAL", owner, "PUBLISHED");
+            long unlisted = insertSkill(c, "unlisted-skill", "已下架", "INTERNAL", owner, "UNLISTED");
+            attachVersion(c, published, "1.0.0", NONE);
+            attachVersion(c, unlisted, "1.0.0", NONE);
+
+            PageResult<Skill> result = skillRepository.search(
+                    criteriaWithStatuses(List.of(SkillStatus.PUBLISHED, SkillStatus.UNLISTED)));
+
+            assertThat(result.items())
+                    .extracting(skill -> skill.name().value())
+                    .containsExactlyInAnyOrder("published-skill", "unlisted-skill");
+            assertThat(result.total()).isEqualTo(2L);
+            // 两种状态混在同一页时,每一行的 status 必须各自正确 —— 这是"写死常量"最容易露馅的地方,
+            // 也是管理页真正的使用场景(默认就是"全部")。
+            assertThat(result.items())
+                    .extracting(Skill::status)
+                    .containsExactlyInAnyOrder(SkillStatus.PUBLISHED, SkillStatus.UNLISTED);
+        }
+    }
+
+    private SkillSearchCriteria criteriaWithStatuses(List<SkillStatus> statuses) {
+        return new SkillSearchCriteria(
+                null, List.of(), false, null, null, statuses, SkillSortOption.LATEST, 1, 20);
     }
 
     @Test
@@ -706,6 +761,117 @@ class SkillRepositoryImplIntegrationTest {
             versionId = rs.getLong(1);
         }
         return versionId;
+    }
+
+    // ------------------------------------------------------------------
+    // 物理删除:关联行必须一起走干净,且绝不能波及别的 skill
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("删除 skill 时,它的版本 / 表态 / 收藏 / 评论行一并删掉")
+    void should_removeAllRelatedRows_whenSkillDeleted() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "doomed-skill", "待删", "INTERNAL", owner, "PUBLISHED");
+            attachVersion(c, skillId, "1.0.0", NONE);
+            attachVersion(c, skillId, "1.1.0", NONE);
+            insertReaction(c, skillId, owner);
+            insertFavorite(c, skillId, owner);
+            insertComment(c, skillId, owner);
+
+            skillRepository.deleteSkillCascade(skillId);
+
+            // 逐张表验,而不是只验 skill 行没了:漏删任何一张都会留下永远查不到主体的孤儿行,
+            // 而孤儿行不会报错,只会在某次统计或迁移时冒出来。
+            assertThat(countBySkill(c, "skill_version", skillId)).isZero();
+            assertThat(countBySkill(c, "skill_reaction", skillId)).isZero();
+            assertThat(countBySkill(c, "skill_favorite", skillId)).isZero();
+            assertThat(countBySkill(c, "skill_comment", skillId)).isZero();
+            assertThat(skillRepository.findDetailById(skillId)).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("删除一个 skill 不影响另一个 skill 的任何行")
+    void should_leaveOtherSkillsIntact_whenSkillDeleted() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long doomed = insertSkill(c, "doomed-skill", "待删", "INTERNAL", owner, "PUBLISHED");
+            long survivor = insertSkill(c, "survivor-skill", "幸存", "INTERNAL", owner, "PUBLISHED");
+            attachVersion(c, doomed, "1.0.0", NONE);
+            attachVersion(c, survivor, "1.0.0", NONE);
+            insertFavorite(c, survivor, owner);
+
+            skillRepository.deleteSkillCascade(doomed);
+
+            assertThat(skillRepository.findDetailById(survivor)).isPresent();
+            assertThat(countBySkill(c, "skill_version", survivor)).isEqualTo(1);
+            assertThat(countBySkill(c, "skill_favorite", survivor)).isEqualTo(1);
+        }
+    }
+
+    @Test
+    @DisplayName("删除前能取到该 skill 全部版本的 artifactKey——删完就再也查不到了,顺序不能反")
+    void should_returnAllVersionArtifactKeys_whenCollectingBeforeDelete() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "multi-version-skill", "多版本", "INTERNAL", owner, "PUBLISHED");
+            attachVersion(c, skillId, "1.0.0", NONE);
+            attachVersion(c, skillId, "1.1.0", NONE);
+
+            List<String> keys = skillRepository.findVersionArtifactKeys(skillId);
+
+            assertThat(keys)
+                    .containsExactlyInAnyOrder(
+                            "artifacts/" + skillId + "/1.0.0.zip", "artifacts/" + skillId + "/1.1.0.zip");
+        }
+    }
+
+    @Test
+    @DisplayName("没有任何版本的 skill 返回空清单,而不是抛异常")
+    void should_returnEmptyKeys_whenSkillHasNoVersion() throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            long skillId = insertSkill(c, "versionless-skill", "无版本", "INTERNAL", owner, "PUBLISHED");
+
+            assertThat(skillRepository.findVersionArtifactKeys(skillId)).isEmpty();
+        }
+    }
+
+    private int countBySkill(Connection c, String table, long skillId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT count(*) FROM " + table + " WHERE skill_id = ?")) {
+            ps.setLong(1, skillId);
+            ResultSet rs = ps.executeQuery();
+            rs.next();
+            return rs.getInt(1);
+        }
+    }
+
+    private void insertReaction(Connection c, long skillId, long userId) throws SQLException {
+        try (PreparedStatement ps =
+                c.prepareStatement("INSERT INTO skill_reaction (skill_id, user_id, reaction) VALUES (?, ?, 'LIKE')")) {
+            ps.setLong(1, skillId);
+            ps.setLong(2, userId);
+            ps.executeUpdate();
+        }
+    }
+
+    private void insertFavorite(Connection c, long skillId, long userId) throws SQLException {
+        try (PreparedStatement ps =
+                c.prepareStatement("INSERT INTO skill_favorite (skill_id, user_id) VALUES (?, ?)")) {
+            ps.setLong(1, skillId);
+            ps.setLong(2, userId);
+            ps.executeUpdate();
+        }
+    }
+
+    private void insertComment(Connection c, long skillId, long userId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO skill_comment (skill_id, user_id, content) VALUES (?, ?, '一条评论')")) {
+            ps.setLong(1, skillId);
+            ps.setLong(2, userId);
+            ps.executeUpdate();
+        }
     }
 
     private SkillSearchCriteria defaultCriteria() {

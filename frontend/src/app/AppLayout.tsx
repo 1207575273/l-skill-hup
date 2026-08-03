@@ -33,6 +33,26 @@ function navLinkClassName({ isActive }: { isActive: boolean }): string {
  * 是两件不相关的事,不该被绑在一起。数量来自 Zustand 购物车(`useInstallCartCount`),
  * 是纯客户端状态,不经 TanStack Query。
  */
+/**
+ * 管理入口,**只对已登录用户显示**。
+ *
+ * 与安装单入口相反:那个匿名也能用,所以恒显示;管理页对未登录者只会渲染一句"请先登录",
+ * 让入口一直挂在那里等于提供一个点了就碰壁的按钮。
+ *
+ * 数据未回来前按"未登录"处理,与登录页决定注册入口显不显示同一条判据 —— 避免入口先出现再消失的闪烁。
+ */
+function ManageNavLink() {
+  const currentUserQuery = useCurrentUser()
+  if (currentUserQuery.data === undefined) {
+    return null
+  }
+  return (
+    <NavLink to="/manage" className={navLinkClassName}>
+      管理
+    </NavLink>
+  )
+}
+
 function InstallCartNavLink() {
   const count = useInstallCartCount()
   return (
@@ -105,6 +125,7 @@ export function AppLayout({ children, authSlot }: AppLayoutProps) {
               <NavLink to="/upload" className={navLinkClassName}>
                 上传
               </NavLink>
+              <ManageNavLink />
               <InstallCartNavLink />
             </nav>
           </div>

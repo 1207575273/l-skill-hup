@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { skillKeys } from '../api/queryKeys'
+import type { ManagedSkillFilter } from '../api/skills'
 import {
+  fetchManagedSkills,
   fetchSkillDetail,
   fetchSkillFileContent,
   fetchSkillList,
@@ -25,6 +27,20 @@ export function useSkillList(filter: SkillListFilter = {}) {
   return useQuery({
     queryKey: skillKeys.list(filter),
     queryFn: ({ signal }) => fetchSkillList(filter, { signal }),
+  })
+}
+
+/**
+ * `GET /skills/manage`,管理页列表:含已下架。
+ *
+ * 需要登录,所以由调用方在未登录时用 `enabled` 关掉 —— 让一个必然 401 的请求发出去,
+ * 只会在控制台留下看起来像 bug 的报错。
+ */
+export function useManagedSkills(filter: ManagedSkillFilter, options?: QueryToggle) {
+  return useQuery({
+    queryKey: skillKeys.managed(filter),
+    queryFn: ({ signal }) => fetchManagedSkills(filter, { signal }),
+    enabled: options?.enabled ?? true,
   })
 }
 

@@ -39,7 +39,8 @@ public final class InstallScriptRenderer {
 
     private InstallScriptRenderer() {}
 
-    public static String renderPowerShell(InstallBundle bundle, List<SkillArtifact> artifacts, String publicBaseUrl) {
+    public static String renderPowerShell(
+            InstallBundle bundle, List<SkillArtifact> artifacts, String publicBaseUrl, int deletedItemCount) {
         requireNonEmpty(artifacts);
         StringBuilder script = new StringBuilder();
         script.append("# skill-hub 安装脚本(自动生成,请勿分享超出团队范围)\n");
@@ -56,6 +57,7 @@ public final class InstallScriptRenderer {
         // "这个 skill 的认证已被撤销" —— 那次确认就是不知情的,而认证撤销恰恰是唯一覆盖内容语义的信号。
         appendRevokedGuardPowerShell(script, artifacts);
         appendUnlistedNoticesPowerShell(script, artifacts);
+        appendDeletedNoticePowerShell(script, deletedItemCount);
 
         script.append("if (-not $Yes) {\n");
         script.append("    $confirm = Read-Host '确认安装以上 skill 到该目录? [y/N]'\n");
@@ -84,7 +86,8 @@ public final class InstallScriptRenderer {
         return script.toString();
     }
 
-    public static String renderBash(InstallBundle bundle, List<SkillArtifact> artifacts, String publicBaseUrl) {
+    public static String renderBash(
+            InstallBundle bundle, List<SkillArtifact> artifacts, String publicBaseUrl, int deletedItemCount) {
         requireNonEmpty(artifacts);
         StringBuilder script = new StringBuilder();
         script.append("#!/usr/bin/env bash\n");
@@ -105,6 +108,7 @@ public final class InstallScriptRenderer {
         // 顺序理由同 renderPowerShell:确认必须是知情的确认。
         appendRevokedGuardBash(script, artifacts);
         appendUnlistedNoticesBash(script, artifacts);
+        appendDeletedNoticeBash(script, deletedItemCount);
 
         // 确认必须从 /dev/tty 读,不能从 stdin 读。
         //
@@ -255,6 +259,34 @@ public final class InstallScriptRenderer {
         if (!unlisted.isEmpty()) {
             script.append('\n');
         }
+    }
+
+    /**
+     * 安装单里有条目在生成之后被物理删除时,明说跳过了几个。
+     *
+     * <p><b>不能静默少装。</b>安装单的语义是"把我勾的这几个装上",少装一个而什么都不说,用户会以为装全了,
+     * 直到某次 Agent 找不到那个 skill 才发现 —— 那时已经完全对不上原因了。这正是业务建模文档 4.8 当初拒绝
+     * 物理删除的顾虑,删除能力加上之后,这里就是兑现那份顾虑的地方。
+     *
+     * <p>只说数量不说名字:名字随 skill 行一起删掉了,查不到。硬要从别处翻出来展示反而会给人"它还在"的错觉。
+     */
+    private static void appendDeletedNoticePowerShell(StringBuilder script, int deletedItemCount) {
+        if (deletedItemCount <= 0) {
+            return;
+        }
+        script.append("Write-Host ")
+                .append(quotePs("提示: 本安装单中有 " + deletedItemCount + " 个 skill 已从平台删除,将跳过它们"))
+                .append(" -ForegroundColor Yellow\n\n");
+    }
+
+    /** 见 {@link #appendDeletedNoticePowerShell}。 */
+    private static void appendDeletedNoticeBash(StringBuilder script, int deletedItemCount) {
+        if (deletedItemCount <= 0) {
+            return;
+        }
+        script.append("echo ")
+                .append(quoteSh("提示: 本安装单中有 " + deletedItemCount + " 个 skill 已从平台删除,将跳过它们"))
+                .append("\n\n");
     }
 
     private static void appendRevokedGuardBash(StringBuilder script, List<SkillArtifact> artifacts) {

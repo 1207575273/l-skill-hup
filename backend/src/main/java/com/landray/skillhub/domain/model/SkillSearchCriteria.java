@@ -16,6 +16,7 @@ import com.landray.skillhub.domain.exception.InvalidSkillSortException;
  * @param certifiedOnly 只看已认证(最新版本 CERTIFIED)
  * @param keyword 原始关键词(未转义),转义交给 {@link LikePatternEscaper}
  * @param ownerUserId 归属人筛选,{@code null} 表示不筛
+ * @param statuses 要查的状态集合,不允许为空集合——"查哪些状态"必须是调用方的显式决定
  * @param sort 排序方式,不允许为 {@code null}
  * @param page 页码,从 1 开始
  * @param size 每页条数,上限 100
@@ -26,6 +27,7 @@ public record SkillSearchCriteria(
         boolean certifiedOnly,
         String keyword,
         Long ownerUserId,
+        List<SkillStatus> statuses,
         SkillSortOption sort,
         int page,
         int size) {
@@ -34,9 +36,31 @@ public record SkillSearchCriteria(
     private static final int MIN_SIZE = 1;
     private static final int MAX_SIZE = 100;
 
+    /**
+     * 公开列表用的便捷构造:只查 {@code PUBLISHED}。
+     *
+     * <p>保留这个重载而不是让每个调用方都写一遍 {@code List.of(PUBLISHED)},是因为公开列表是绝对多数场景,
+     * 而"默认只看已发布"这条规则应该由类型本身兜住 —— 让它成为需要显式覆盖的默认值,而不是需要显式指定的必填项。
+     * 反过来做的话,某天有人漏传就会把下架内容泄漏到公开列表里,而那种疏漏在 code review 里很难被看见。
+     */
+    public SkillSearchCriteria(
+            SkillSource source,
+            List<Long> tagIds,
+            boolean certifiedOnly,
+            String keyword,
+            Long ownerUserId,
+            SkillSortOption sort,
+            int page,
+            int size) {
+        this(source, tagIds, certifiedOnly, keyword, ownerUserId, List.of(SkillStatus.PUBLISHED), sort, page, size);
+    }
+
     public SkillSearchCriteria {
         if (sort == null) {
             throw new InvalidSkillSortException("排序方式不能为空");
+        }
+        if (statuses == null || statuses.isEmpty()) {
+            throw new IllegalArgumentException("statuses 不能为空——空集合会让 SQL 退化成不带状态条件的全量查询");
         }
         if (page < MIN_PAGE) {
             throw new IllegalArgumentException("page 必须 >= " + MIN_PAGE + ",实际为 " + page);
