@@ -56,6 +56,71 @@ class InstallScriptRendererTest {
     }
 
     @Test
+    void should_extractIntoSkillsRootNotIntoSkillDir_when_renderingBash() {
+        // 制品 zip 的顶层目录**就是 skill name**(5.3 第 10 步:按最终 name 打包,顶层目录 = 最终 name)。
+        // 再解压到 $SKILLS_ROOT/$name 就会套成 skills/html-ppt/html-ppt/SKILL.md ——
+        // 实测就是这个结果,而这样装出来 Agent 找不到 SKILL.md,skill 等于没装上。
+        String script = InstallScriptRenderer.renderBash(
+                bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+
+        assertThat(script).contains("unzip -q \"$tmp_file\" -d \"$SKILLS_ROOT\"");
+        assertThat(script).doesNotContain("-d \"$target_dir\"");
+    }
+
+    @Test
+    void should_extractIntoSkillsRootNotIntoSkillDir_when_renderingPowerShell() {
+        String script = InstallScriptRenderer.renderPowerShell(
+                bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+
+        assertThat(script).contains("-DestinationPath $SkillsRoot");
+        assertThat(script).doesNotContain("-DestinationPath $targetDir");
+    }
+
+    @Test
+    void should_readConfirmationFromTty_when_renderingBash() {
+        // `curl -fsSL <url> | sh` 是文档里给的标准用法,这时脚本的 stdin 是 curl 的管道而不是终端。
+        // 从 stdin 读确认会立刻拿到 EOF,confirm 为空,于是每次都走"已取消安装" —— 实测就是这样,
+        // 用户根本没有机会按 y。必须显式从 /dev/tty 读。
+        String script = InstallScriptRenderer.renderBash(
+                bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+
+        assertThat(script).contains("< /dev/tty");
+        assertThat(script).doesNotContain("read -r -p");
+    }
+
+    @Test
+    void should_failLoudlyWithUsageHint_when_bashHasNoTty() {
+        // 没有 /dev/tty 的真·非交互环境(CI、容器)要**报错退出**,不能静默当成"用户取消"。
+        // 而且要给出能直接抄的写法:`curl | sh` 传不了参数,必须 `sh -s -- --yes`,
+        // 这个坑不提示的话没人猜得到。
+        String script = InstallScriptRenderer.renderBash(
+                bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+
+        assertThat(script).contains("sh -s -- --yes");
+        assertThat(script).contains("exit 1");
+    }
+
+    @Test
+    void should_downloadIntoZipSuffixedTempFile_when_renderingPowerShell() {
+        // Expand-Archive 只认 .zip 后缀,而 [System.IO.Path]::GetTempFileName() 给的是 .tmp。
+        // 实测报错:".tmp 不是支持的存档文件格式。只有 .zip 才是支持的存档文件格式。"
+        // 这条路径在单测里跑不到(渲染出来的是文本,不会真去解压),所以只能盯住渲染结果本身。
+        String script = InstallScriptRenderer.renderPowerShell(
+                bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),
+                List.of(artifact(SkillStatus.PUBLISHED, Certification.NONE, null)), PUBLIC_BASE_URL);
+
+        // 断言的是**赋值语句**而不是 "GetTempFileName" 这个词 —— 模板注释里要解释为什么不用它,
+        // 按词禁会把解释本身也判成违规。
+        assertThat(script).doesNotContain("$tempFile = [System.IO.Path]::GetTempFileName()");
+        assertThat(script).contains("$tempFile = Join-Path");
+        assertThat(script).contains("\".zip\")");
+    }
+
+    @Test
     void should_useHomeDirectory_when_scopeIsGlobal() {
         String script = InstallScriptRenderer.renderPowerShell(
                 bundle(ClientCode.CLAUDE, InstallScope.GLOBAL),

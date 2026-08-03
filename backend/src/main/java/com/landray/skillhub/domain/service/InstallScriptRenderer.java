@@ -106,8 +106,28 @@ public final class InstallScriptRenderer {
         appendRevokedGuardBash(script, artifacts);
         appendUnlistedNoticesBash(script, artifacts);
 
+        // 确认必须从 /dev/tty 读,不能从 stdin 读。
+        //
+        // 文档给的标准用法是 `curl -fsSL <url> | sh`,这时脚本的 stdin 是 curl 的管道 ——
+        // `read` 立刻拿到 EOF,confirm 恒为空,于是**每一次都走"已取消安装"**,用户根本没有机会按 y。
+        // 实测就是这个症状,而且极具误导性:看起来像是脚本认为你拒绝了,其实是它压根没问。
+        //
+        // PowerShell 侧没有这个问题,`irm | iex` 只是把字符串当代码执行,stdin 仍是终端,
+        // 所以那边的 Read-Host 照常工作 —— 两边行为不一致正是这个 bug 难被发现的原因。
+        //
+        // 提示也写到 /dev/tty:stdout 可能被重定向,那时提示会跟着进文件,用户对着空白光标不知道在等什么。
         script.append("if [ \"$YES\" -ne 1 ]; then\n");
-        script.append("  read -r -p '确认安装以上 skill 到该目录? [y/N] ' confirm\n");
+        script.append("  if [ -e /dev/tty ]; then\n");
+        script.append("    printf '确认安装以上 skill 到该目录? [y/N] ' > /dev/tty\n");
+        script.append("    read -r confirm < /dev/tty\n");
+        script.append("  else\n");
+        // 没有终端是**装不了**,不是"用户取消",所以 exit 1。静默 exit 0 会让 CI 里安装没发生却当成功。
+        // 顺带把正确写法直接给出来:`curl | sh` 传不进参数(sh 会把 --yes 当文件名),
+        // 必须写成 `sh -s -- --yes`,不提示没人猜得到。
+        script.append("    echo '当前环境没有终端,无法交互确认。'\n");
+        script.append("    echo '如确认安装,改用: curl -fsSL <本脚本地址> | sh -s -- --yes'\n");
+        script.append("    exit 1\n");
+        script.append("  fi\n");
         script.append("  if [ \"$confirm\" != 'y' ] && [ \"$confirm\" != 'Y' ]; then\n");
         script.append("    echo '已取消安装'\n");
         script.append("    exit 0\n");
@@ -138,7 +158,11 @@ public final class InstallScriptRenderer {
             function Install-OneSkill {
                 param($Name, $Version, $Sha256, $DownloadUrl)
 
-                $tempFile = [System.IO.Path]::GetTempFileName()
+                # 后缀必须是 .zip:Expand-Archive 按扩展名判断格式,拿到 .tmp 会直接报
+                # ".tmp 不是支持的存档文件格式"。[System.IO.Path]::GetTempFileName() 给的正是 .tmp,
+                # 所以这里自己拼路径而不是用它。顺带避开它的两个毛病:它会真的创建一个空文件
+                # (紧接着就被 -OutFile 覆盖,白做一次 IO),以及 TEMP 目录里堆到 65535 个 tmp 文件时会抛异常。
+                $tempFile = Join-Path ([System.IO.Path]::GetTempPath()) ("skillhub-" + [guid]::NewGuid().ToString('N') + ".zip")
                 try {
                     Invoke-WebRequest -Uri $DownloadUrl -OutFile $tempFile -UseBasicParsing
 
@@ -155,7 +179,9 @@ public final class InstallScriptRenderer {
                         Move-Item -Path $targetDir -Destination $backupDir -Force
                     }
 
-                    Expand-Archive -Path $tempFile -DestinationPath $targetDir -Force
+                    # 解压到 $SkillsRoot 而不是 $targetDir,理由同 bash 侧:zip 顶层目录就是 skill name,
+                    # 解到 $targetDir 会套成 skills/foo/foo/SKILL.md。
+                    Expand-Archive -Path $tempFile -DestinationPath $SkillsRoot -Force
                     Write-Host "已安装: $Name@$Version -> $targetDir" -ForegroundColor Green
                 } finally {
                     Remove-Item -Path $tempFile -ErrorAction SilentlyContinue
@@ -187,8 +213,12 @@ public final class InstallScriptRenderer {
                 mv "$target_dir" "$backup_dir"
               fi
 
-              mkdir -p "$target_dir"
-              unzip -q "$tmp_file" -d "$target_dir"
+              # 解压到 SKILLS_ROOT 而不是 target_dir:制品 zip 的顶层目录**就是 skill name**
+              # (5.3 第 10 步:按最终 name 打包,顶层目录 = 最终 name),解到 target_dir 会套成
+              # skills/foo/foo/SKILL.md,而那样 Agent 找不到 SKILL.md,等于没装上。
+              # 也不需要 mkdir target_dir —— unzip 会按 zip 里的目录结构自己建。
+              mkdir -p "$SKILLS_ROOT"
+              unzip -q "$tmp_file" -d "$SKILLS_ROOT"
               echo "已安装: $name@$version -> $target_dir"
             }""";
 
