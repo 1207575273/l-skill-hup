@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useSearchParams } from 'react-router'
 import type { ApiError } from '../api/client'
-import type { SkillListFilter, SkillSortOption, SkillSource } from '../api/types'
+import type { SkillListFilter, SkillSortOption, SkillSource, SkillSummary } from '../api/types'
 import { Button } from '../components/Button'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
@@ -10,6 +10,7 @@ import { QuickInstallMenu } from '../components/QuickInstallMenu'
 import { SkillCard } from '../components/SkillCard'
 import { SkillFilterPanel } from '../components/SkillFilterPanel'
 import { Spinner } from '../components/Spinner'
+import { useInstallCartStore } from '../hooks/useInstallCartStore'
 import { useSkillList } from '../hooks/useSkillQueries'
 import { useTags } from '../hooks/useTagQueries'
 
@@ -114,6 +115,12 @@ export default function SkillListPage() {
   const skillListQuery = useSkillList(filter)
   const tagsQuery = useTags()
 
+  // 只订阅 items,不整个 store 取出来——否则切客户端 / 安装级别也会让整页列表重渲染
+  // (frontend/CLAUDE.md 第三节的 selector 约束)。
+  const cartItems = useInstallCartStore((state) => state.items)
+  const toggleCartItem = useInstallCartStore((state) => state.toggleItem)
+  const cartSkillIds = useMemo(() => new Set(cartItems.map((item) => item.skillId)), [cartItems])
+
   const curatedTags = useMemo(
     () => tagsQuery.data?.filter((tag) => tag.kind === 'CURATED') ?? [],
     [tagsQuery.data],
@@ -145,6 +152,24 @@ export default function SkillListPage() {
 
   function handleReset() {
     setSearchParams(new URLSearchParams(), { replace: true })
+  }
+
+  /**
+   * 加入 / 移出安装单。
+   *
+   * <p>没有任何版本的 skill(`latestVersionId` 为 null)直接忽略 —— 安装单的每一项都要求
+   * `versionId`,拿不到就没法生成安装命令。这种数据在正常流程里不该出现(发布必然带一个版本),
+   * 但列表响应的类型允许它,静默忽略比塞一个假 id 进去安全。
+   */
+  function handleToggleInstallCart(skill: SkillSummary) {
+    if (skill.latestVersionId === null) {
+      return
+    }
+    toggleCartItem({
+      skillId: skill.id,
+      versionId: skill.latestVersionId,
+      skillDisplayName: skill.displayName,
+    })
   }
 
   return (
@@ -206,11 +231,15 @@ export default function SkillListPage() {
             className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
           >
             {skillListQuery.data.items.map((skill) => (
-              <li key={skill.id}>
+              // `h-full` 要一路传到 li:grid 的直接子项是 li,卡片的 h-full 参照的是 li 的高度,
+              // li 自己不撑满的话,卡片再写 h-full 也只是撑满一个矮盒子。
+              <li key={skill.id} className="h-full">
                 <SkillCard
                   skill={skill}
                   detailHref={`/skills/${skill.id}`}
                   quickInstallMenu={<QuickInstallMenu skillId={skill.id} />}
+                  inInstallCart={cartSkillIds.has(skill.id)}
+                  onToggleInstallCart={() => handleToggleInstallCart(skill)}
                 />
               </li>
             ))}

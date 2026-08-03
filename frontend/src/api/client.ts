@@ -38,19 +38,43 @@ function readStoredToken(): string | null {
 
 let authToken: string | null = readStoredToken()
 
+/**
+ * token 变化的订阅者。让 token 成为一个**可订阅的外部数据源**,而不只是一个模块级变量。
+ *
+ * 起因是一个实测到的 bug:登录成功后跳回列表页,右上角仍显示"登录"而不是用户名,手动刷新才正常。
+ * 根因是 `useCurrentUser` 的 `enabled` 读 `getAuthToken()` —— 普通变量,改了不会通知 React,
+ * 于是首屏求值为 false 之后就再没重新求值过。`invalidateQueries` 也救不了:被 `enabled: false`
+ * 关掉的查询,失效了也不会发请求。
+ *
+ * 这类 bug 单测抓不到 —— 每个页面测试各自 mock、各自设好 token 再渲染,永远遇不到"渲染之后 token 才变"
+ * 这个时序。要靠真的点一遍才会暴露。
+ */
+const authTokenListeners = new Set<() => void>()
+
+/** 订阅 token 变化,返回取消订阅函数。签名按 `useSyncExternalStore` 的要求设计。 */
+export function subscribeAuthToken(listener: () => void): () => void {
+  authTokenListeners.add(listener)
+  return () => {
+    authTokenListeners.delete(listener)
+  }
+}
+
 export function getAuthToken(): string | null {
   return authToken
 }
 
 export function setAuthToken(token: string | null): void {
   authToken = token
-  if (typeof window === 'undefined') {
-    return
+  if (typeof window !== 'undefined') {
+    if (token) {
+      window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token)
+    } else {
+      window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
+    }
   }
-  if (token) {
-    window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token)
-  } else {
-    window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
+  // 放在 localStorage 写入之后:订阅者被唤醒时读到的必须已经是新值。
+  for (const listener of authTokenListeners) {
+    listener()
   }
 }
 

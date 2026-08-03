@@ -105,7 +105,9 @@ export function QuickInstallMenu({ skillId, versionId }: QuickInstallMenuProps) 
 
       {open ? (
         <div
-          // biome-ignore lint/a11y/useSemanticElements: 这是下拉面板容器,内部条目才是 menuitem
+          // 这是下拉面板容器,内部条目才是 menuitem。
+          // 曾在这里挂过 `biome-ignore lint/a11y/useSemanticElements`,但 biome 报"抑制无效"——
+          // 那条规则本就不针对 role="menu"。无效的抑制注释是纯噪音,还会让人以为这里真有个规则要绕。
           role="menu"
           className="absolute right-0 z-20 mt-1 min-w-56 rounded-control border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-800"
         >

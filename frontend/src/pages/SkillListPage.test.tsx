@@ -7,6 +7,7 @@ import * as installApi from '../api/install'
 import * as skillsApi from '../api/skills'
 import * as tagsApi from '../api/tags'
 import type { SkillSummary, SkillVersionSummary } from '../api/types'
+import { useInstallCartStore } from '../hooks/useInstallCartStore'
 import SkillListPage from './SkillListPage'
 
 vi.mock('../api/skills')
@@ -32,6 +33,7 @@ function buildSkill(overrides: Partial<SkillSummary> = {}): SkillSummary {
     updatedAt: '2026-07-20T08:00:00Z',
     owner: { userId: 1, displayName: '张三', employeeNo: 'E1024' },
     tags: [],
+    latestVersionId: 99,
     ...overrides,
   }
 }
@@ -149,6 +151,46 @@ describe('SkillListPage', () => {
       )
     })
     expect(screen.getByText(/tagIds=9/)).toBeInTheDocument()
+  })
+
+  it('should_put_skill_into_install_cart_when_add_button_clicked', async () => {
+    // 这条盯的是一个真实漏掉的接缝:安装单 store 早就写好了 addItem/toggleItem,
+    // 但整个前端一个调用点都没有 —— 安装单页做完了消费端,生产端谁都没做,
+    // 于是安装单永远是空的。页面各自测各自的时候看不出来,因为没人负责这条连线。
+    useInstallCartStore.getState().clear()
+    mockedFetchSkillList.mockResolvedValue({
+      items: [buildSkill({ id: 42, displayName: 'PDF 摘要助手', latestVersionId: 99 })],
+      total: 1,
+      page: 1,
+      size: 20,
+    })
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: '加入安装单' }))
+
+    expect(useInstallCartStore.getState().items).toEqual([
+      { skillId: 42, versionId: 99, skillDisplayName: 'PDF 摘要助手' },
+    ])
+    // 加入后按钮翻成"已加入",再点一次移出 —— 同一个按钮双向操作,不另开一个"移除"入口。
+    fireEvent.click(await screen.findByRole('button', { name: '已加入安装单' }))
+    expect(useInstallCartStore.getState().items).toHaveLength(0)
+  })
+
+  it('should_ignore_add_to_cart_when_skill_has_no_version', async () => {
+    // latestVersionId 为 null 说明这个 skill 一个版本都没有,安装单里放它毫无意义 ——
+    // 生成安装命令时必须有 versionId。静默忽略,不塞假 id。
+    useInstallCartStore.getState().clear()
+    mockedFetchSkillList.mockResolvedValue({
+      items: [buildSkill({ id: 7, latestVersionId: null })],
+      total: 1,
+      page: 1,
+      size: 20,
+    })
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: '加入安装单' }))
+
+    expect(useInstallCartStore.getState().items).toHaveLength(0)
   })
 
   it('should_resolve_latest_version_id_and_request_bundle_when_quick_install_target_picked', async () => {

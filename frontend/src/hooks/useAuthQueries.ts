@@ -1,24 +1,42 @@
 import { useQuery } from '@tanstack/react-query'
+import { useSyncExternalStore } from 'react'
 import { fetchAuthProviders, fetchCurrentUser, fetchIdentities } from '../api/auth'
-import { getAuthToken } from '../api/client'
+import { getAuthToken, subscribeAuthToken } from '../api/client'
 import { authKeys } from '../api/queryKeys'
 
 /** 登录方式集合几乎不变,给一个较长的 staleTime。 */
 const AUTH_PROVIDERS_STALE_TIME_MS = 10 * 60_000
 
 /**
- * `GET /auth/me`(需登录)。没有 token 时不发请求——发了也是必然的 401,徒增一次网络往返与错误噪音。
+ * 当前是否持有 token,**响应式**。
  *
- * `enabled` 读的是 `getAuthToken()` 这个模块级变量,不是响应式状态:登录/登出后要靠调用方所在组件
- * 重新渲染(路由跳转、`useLogin`/`useLogout` 触发的状态变化)才会重新求值。P0 的登录/登出都会带来
- * 页面跳转或全局状态变化,这个前提成立;真出现"同一组件里 token 变了但没重渲染"的场景,再补
- * `useSyncExternalStore` 订阅 token 变化。
+ * 上一版直接在 `enabled` 里写 `getAuthToken() !== null`,并附了一句"登录/登出都会带来页面跳转,
+ * 这个前提成立"。实测那个前提不成立:登录成功后 `navigate` 回列表页,`AppLayout` 并不重新挂载,
+ * 右上角一直显示"登录",刷新才好。`invalidateQueries` 也救不回来 —— 被 `enabled: false` 关掉的查询,
+ * 失效了同样不会发请求。
+ *
+ * 返回 boolean 而不是 token 本身:`getSnapshot` 必须返回稳定值,原始类型天然满足;
+ * 而且调用方只关心"有没有",不关心是什么。
+ */
+function useHasAuthToken(): boolean {
+  return useSyncExternalStore(
+    subscribeAuthToken,
+    () => getAuthToken() !== null,
+    // 服务端渲染快照。本项目目前不做 SSR,给 false 是安全的默认:
+    // 宁可首屏当作未登录、水合后再纠正,也不要渲染出一个假的已登录态。
+    () => false,
+  )
+}
+
+/**
+ * `GET /auth/me`(需登录)。没有 token 时不发请求——发了也是必然的 401,徒增一次网络往返与错误噪音。
  */
 export function useCurrentUser() {
+  const hasToken = useHasAuthToken()
   return useQuery({
     queryKey: authKeys.me,
     queryFn: fetchCurrentUser,
-    enabled: getAuthToken() !== null,
+    enabled: hasToken,
     retry: false,
   })
 }
@@ -34,9 +52,10 @@ export function useAuthProviders() {
 
 /** `GET /identities`(需登录),同 {@link useCurrentUser} 的 enabled 语义。 */
 export function useIdentities() {
+  const hasToken = useHasAuthToken()
   return useQuery({
     queryKey: authKeys.identities,
     queryFn: fetchIdentities,
-    enabled: getAuthToken() !== null,
+    enabled: hasToken,
   })
 }

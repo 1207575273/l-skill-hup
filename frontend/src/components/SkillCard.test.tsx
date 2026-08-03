@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { SkillSummary } from '../api/types'
 import { SkillCard } from './SkillCard'
 
@@ -27,17 +27,23 @@ function buildSkill(overrides: Partial<SkillSummary> = {}): SkillSummary {
     ],
     certification: 'CERTIFIED',
     updatedAt: '2026-07-20T08:00:00Z',
+    latestVersionId: 99,
     ...overrides,
   }
 }
 
-function renderCard(skill: SkillSummary) {
+function renderCard(
+  skill: SkillSummary,
+  options: { inInstallCart?: boolean; onToggleInstallCart?: () => void } = {},
+) {
   return render(
     <MemoryRouter>
       <SkillCard
         skill={skill}
         detailHref={`/skills/${skill.id}`}
         quickInstallMenu={<button type="button">claude · global</button>}
+        inInstallCart={options.inInstallCart ?? false}
+        onToggleInstallCart={options.onToggleInstallCart ?? (() => {})}
       />
     </MemoryRouter>,
   )
@@ -120,6 +126,31 @@ describe('SkillCard', () => {
     renderCard(buildSkill({ id: 42 }))
 
     expect(screen.getByRole('link', { name: '查看详情' })).toHaveAttribute('href', '/skills/42')
+  })
+
+  it('should_call_toggle_when_add_to_install_cart_clicked', () => {
+    const onToggleInstallCart = vi.fn()
+    renderCard(buildSkill(), { onToggleInstallCart })
+
+    fireEvent.click(screen.getByRole('button', { name: '加入安装单' }))
+
+    expect(onToggleInstallCart).toHaveBeenCalledTimes(1)
+  })
+
+  it('should_show_already_added_label_when_in_install_cart', () => {
+    renderCard(buildSkill(), { inInstallCart: true })
+
+    expect(screen.getByRole('button', { name: '已加入安装单' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '加入安装单' })).not.toBeInTheDocument()
+  })
+
+  it('should_keep_added_state_visible_outside_hover_when_in_install_cart', () => {
+    // 操作行平时是 opacity-0、hover 才浮出来。但"已加入"是**状态**不是操作 ——
+    // 藏在 hover 里的话,用户扫一眼列表根本看不出自己勾了哪几个,得逐个悬停去试。
+    renderCard(buildSkill(), { inInstallCart: true })
+
+    const added = screen.getByRole('button', { name: '已加入安装单' })
+    expect(added.closest('.opacity-0')).toBeNull()
   })
 
   it('should_render_injected_quick_install_action_directly_when_rendered', () => {
