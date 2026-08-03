@@ -50,3 +50,206 @@
   --radius-card: 0.75rem;
   --radius-control: 0.5rem;
 }
+
+/* Markdown 正文排版(components/SkillContentViewer.tsx)。
+
+   为什么必须写在这里、而不是像其他组件那样用原子类:Markdown 渲染出的 HTML 上没有任何 class,
+   样式只能靠后代选择器命中,这正是本项目第四节说的"确实无法组件化的场景"。
+
+   为什么非写不可:Tailwind 的 preflight 把 h1-h6、ul/ol、blockquote 的默认样式全清了 ——
+   不补的话 `# 标题` 渲染出来和正文一样大,列表连圆点都没有,看起来就像根本没解析。
+
+   颜色一律走 token,深色模式跟随 v4 默认的 prefers-color-scheme(与项目其余部分一致,
+   没有手动切换主题的需求)。 */
+@layer components {
+  .markdown-body {
+    color: var(--color-gray-800);
+    font-size: var(--text-sm);
+    line-height: 1.7;
+  }
+
+  .markdown-body > :first-child {
+    margin-top: 0;
+  }
+
+  .markdown-body > :last-child {
+    margin-bottom: 0;
+  }
+
+  .markdown-body h1,
+  .markdown-body h2,
+  .markdown-body h3,
+  .markdown-body h4,
+  .markdown-body h5,
+  .markdown-body h6 {
+    margin-top: 1.5em;
+    margin-bottom: 0.6em;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--color-gray-900);
+  }
+
+  .markdown-body h1 {
+    font-size: var(--text-xl);
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--color-gray-200);
+  }
+
+  .markdown-body h2 {
+    font-size: var(--text-lg);
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--color-gray-200);
+  }
+
+  .markdown-body h3 {
+    font-size: var(--text-base);
+  }
+
+  .markdown-body p {
+    margin: 0.8em 0;
+  }
+
+  .markdown-body a {
+    color: var(--color-brand-600);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .markdown-body ul,
+  .markdown-body ol {
+    margin: 0.8em 0;
+    padding-left: 1.6em;
+  }
+
+  .markdown-body ul {
+    list-style: disc;
+  }
+
+  .markdown-body ol {
+    list-style: decimal;
+  }
+
+  .markdown-body li {
+    margin: 0.3em 0;
+  }
+
+  /* GFM 任务列表:复选框已被渲染成 disabled,这里只去掉它带来的列表符号错位 */
+  .markdown-body li:has(> input[type="checkbox"]) {
+    list-style: none;
+    margin-left: -1.4em;
+  }
+
+  .markdown-body li > input[type="checkbox"] {
+    margin-right: 0.4em;
+  }
+
+  /* 行内 code 与代码块 code 要分开:后者已经有 pre 的底色,再叠一层会出现色块套色块 */
+  .markdown-body code {
+    padding: 0.15em 0.4em;
+    border-radius: var(--radius-control);
+    background-color: var(--color-gray-100);
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+
+  .markdown-body pre {
+    margin: 0.9em 0;
+    padding: 0.9em 1em;
+    border-radius: var(--radius-control);
+    background-color: var(--color-gray-100);
+    /* 长命令行不换行、单独横向滚动 —— 强制折行会让人复制到断开的命令 */
+    overflow-x: auto;
+  }
+
+  .markdown-body pre code {
+    padding: 0;
+    background-color: transparent;
+    font-size: var(--text-sm);
+  }
+
+  .markdown-body blockquote {
+    margin: 0.9em 0;
+    padding: 0.2em 0 0.2em 1em;
+    border-left: 3px solid var(--color-gray-300);
+    color: var(--color-gray-600);
+  }
+
+  .markdown-body table {
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    margin: 0.9em 0;
+    border-collapse: collapse;
+    overflow-x: auto;
+  }
+
+  .markdown-body th,
+  .markdown-body td {
+    padding: 0.4em 0.8em;
+    border: 1px solid var(--color-gray-200);
+    text-align: left;
+  }
+
+  .markdown-body th {
+    background-color: var(--color-gray-50);
+    font-weight: 600;
+  }
+
+  .markdown-body hr {
+    margin: 1.5em 0;
+    border: 0;
+    border-top: 1px solid var(--color-gray-200);
+  }
+
+  .markdown-body img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .markdown-body {
+      color: var(--color-gray-300);
+    }
+
+    .markdown-body h1,
+    .markdown-body h2,
+    .markdown-body h3,
+    .markdown-body h4,
+    .markdown-body h5,
+    .markdown-body h6 {
+      color: var(--color-gray-100);
+    }
+
+    .markdown-body h1,
+    .markdown-body h2 {
+      border-bottom-color: var(--color-gray-700);
+    }
+
+    .markdown-body a {
+      color: var(--color-brand-500);
+    }
+
+    .markdown-body code,
+    .markdown-body pre {
+      background-color: var(--color-gray-800);
+    }
+
+    .markdown-body blockquote {
+      border-left-color: var(--color-gray-600);
+      color: var(--color-gray-400);
+    }
+
+    .markdown-body th,
+    .markdown-body td {
+      border-color: var(--color-gray-700);
+    }
+
+    .markdown-body th {
+      background-color: var(--color-gray-800);
+    }
+
+    .markdown-body hr {
+      border-top-color: var(--color-gray-700);
+    }
+  }
+}
