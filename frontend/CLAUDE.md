@@ -8,13 +8,18 @@
 
 ```
 frontend/src/
+├── app/            组合根:路由表、Provider 组装、QueryClient 单例
 ├── api/            fetch 封装 + 各资源的请求函数 + 后端 DTO 的 TS 类型
 ├── pages/          路由级页面,只做组合,不写业务细节
 ├── components/     可复用展示组件,纯 UI,不含请求
-├── hooks/          业务逻辑与状态,页面从这里取数据和动作
+├── hooks/          业务逻辑与状态(含 Zustand store),页面从这里取数据和动作
 ├── lib/            纯函数工具(skill 包校验、zip 打包、路径处理等)
 └── styles/         全局样式与 Tailwind 入口,除此之外不写 .css 文件
 ```
+
+`app/` 只放**装配**代码,不放业务:路由表、`QueryClientProvider` / `BrowserRouter` 的组装、`QueryClient` 单例。判断标准是"删掉这个文件应用起不来,但没有任何业务行为随之消失"。放这里而不是塞进 `main.tsx`,是为了让路由表能被 `MemoryRouter` 单独包起来测。
+
+Zustand store 归 `hooks/`(它就是"业务逻辑与状态"),**不单开 `store/` 目录** —— 组件消费它的方式和消费其他 hook 完全一样,分两个目录只会让人每次都要想一下去哪找。
 
 ## 二、硬约束
 

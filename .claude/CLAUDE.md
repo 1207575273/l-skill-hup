@@ -124,6 +124,8 @@ skill-hub 分发的是**会被 Agent 执行的内容**,安全上没有"内部工
 - **现象**:抄网上 Spring Boot 3 的代码片段,`import com.fasterxml.jackson.*` 编译不过。
 - **根因**:Spring Boot 4 基线换成 Jackson 3,包名迁移到 `tools.jackson.*`。网上绝大多数教程仍是 Jackson 2。
 - **处理**:一律用 `tools.jackson.*`。搜到的示例默认当作 Spring Boot 3 的,先核对 import 再用。
+- **但注解是例外,别一刀切**:Jackson 3 只迁了 **core 与 databind**,**annotations 模块刻意留在原坐标**,包名仍是 `com.fasterxml.jackson.annotation.*`。`mvn dependency:tree` 实测 `tools.jackson.core:jackson-databind:3.1.4` 自己就依赖 `com.fasterxml.jackson.core:jackson-annotations:2.21`。这么设计是为了让同一个注解过的 DTO 能被 Jackson 2 和 3 都处理。
+  所以 **`@JsonInclude` / `@JsonProperty` / `@JsonIgnore` 照常从 `com.fasterxml.jackson.annotation` import,那不是 Jackson 2 残留**。ArchUnit 拦 Jackson 2 时必须按 `com.fasterxml.jackson.core..` 和 `com.fasterxml.jackson.databind..` 两个子包精确写,**禁整个 `com.fasterxml.jackson..` 会把合法注解一起误伤**。
 
 ### 8.2 Spring Boot 4 自动配置 JAR 已拆分(已被 Flyway 坑过一次)
 
@@ -196,6 +198,18 @@ skill-hub 分发的是**会被 Agent 执行的内容**,安全上没有"内部工
 - **现象**:一旦用上 Mockito,测试输出刷出 `Mockito is currently self-attaching...` / `WARNING: A Java agent has been loaded dynamically` / `WARNING: Dynamic loading of agents will be disallowed by default in a future release`,外加一条 CDS 告警。
 - **根因**:JEP 451。Mockito 5 的 inline mock-maker 靠 byte-buddy-agent 运行时自挂。
 - **处理**:**不要用 `-XX:+EnableDynamicAgentLoading`** —— 那只是把告警藏起来,升 JDK 那天会直接失败。按 Mockito 官方做法在 surefire 里显式 `-javaagent`,配置与三个组成部分的作用见 `backend/CLAUDE.md` 9.2。**特别注意 `@{argLine}`**:漏了它 JaCoCo 的 agent 会被顶掉,覆盖率永远 0 而构建照样绿。
+
+### 8.12 Spring Boot 4 把测试支持也拆了,`spring-boot-starter-test` 不再什么都带
+
+- **现象**:`@WebMvcTest` / `MockMvc` 找不到符号,或者 import 路径按 3.x 的记忆写完全对不上;`TestRestTemplate` 直接不存在。
+- **根因**:与 8.2 是同一套拆分,只是这次拆的是**测试侧**。主依赖里有 `spring-boot-starter-web` 并不会让 `starter-test` 自动带上 web 测试支持。已实测的三条:
+  - `@WebMvcTest` 在独立模块 `spring-boot-webmvc-test` 里,**包名也变了**:`org.springframework.boot.webmvc.test.autoconfigure`,不是 3.x 的 `org.springframework.boot.test.autoconfigure.web.servlet`。
+  - **`TestRestTemplate` 在 4.x 已经没有了**。本地仓库里 `spring-boot-test-4.0.0.jar` 与 `4.1.0.jar` 都只剩 `LocalServerPort`,4.x 的 spring jar 全仓搜不到这个类。
+  - `LocalServerPort` 还在原处:`org.springframework.boot.test.web.server.LocalServerPort`。
+- **处理**:
+  - 缺什么就显式引对应的 `spring-boot-<xxx>-test` 模块,别指望 starter 兜底。
+  - **端到端打 HTTP 优先用 JDK 内建的 `java.net.http.HttpClient`**,配 `@LocalServerPort`。这类模块搬迁在 Boot 4 里很频繁,用 JDK 自带的就与它无关;顺带 `HttpClient` 遇到 4xx/5xx 不抛异常,断状态码比包装类更直接。
+  - `@WebMvcTest(controllers = Outer.Nested.class)` 引用测试类里的 `static` 嵌套 Controller **实测不生效**(所有请求落到 `NoResourceFoundException`),要用同包的顶层 `public` 类。
 
 ## 九、Agent 与协作
 
@@ -274,7 +288,7 @@ spring:
 - Windows 侧静态 docker CLI 28.1.1 在 `~/.local/bin/docker.exe`(已在 PATH),compose 插件 v5.3.1 在 `~/.docker/cli-plugins/`。**不是 Docker Desktop**,顺带避开其商业授权问题。
 - **dockerd 原生监听 `tcp://127.0.0.1:12375`**(改了 `daemon.json` 的 hosts + systemd drop-in 清掉 `-H fd://`)。不经任何 socat 容器 —— 机器上那个 `aip-docker-tcp`(2375)属于**别的项目**,曾短暂借用过,已解耦,别再依赖它。
 - docker context `wsl` 已创建并设为当前,指向 12375。Git Bash 里 `docker` / `docker compose` 直接可用。
-- **Testcontainers 能自动识别 docker context**,所以连 `DOCKER_HOST` 都不用配。
+- **Testcontainers 不认 docker context,必须配 `~/.testcontainers.properties`**(已配好,见 10.2)。这条以前写的是"能自动识别 context,连 `DOCKER_HOST` 都不用配",**那是错的** —— 当时项目里一个 Testcontainers 测试都没有,那句话从未被验证过。
 - `.wslconfig` 设了 `vmIdleTimeout=-1`。
 
 **WSL 会周期性自己关闭,这是 WSL 的已知缺陷不是配置问题**(microsoft/WSL#40363:Hyper-V VmSwitch 事件 285 与生命周期管理交互失败;微软无根本修复)。`vmIdleTimeout=-1` 和 WSL 内常驻 `sleep infinity` 都实测过,**都挡不住**。
@@ -296,6 +310,24 @@ spring:
 生产走多阶段 Dockerfile:node 阶段构建前端 -> 产物拷进 maven 阶段 -> `mvn package` -> jre 阶段运行。宿主机不需要装 JDK / Node / Maven。
 
 连接信息一律走**环境变量**,不硬编码进 `application-*.yml`。
+
+### 10.2 Testcontainers 必须单独配 docker host(每台机器配一次)
+
+**现象**:`mvn verify` 里所有 Testcontainers 测试报 `Could not find a valid Docker environment`,而同一个 shell 里 `docker ps` 正常、`curl http://localhost:12375/_ping` 返回 200。
+
+**根因**:`docker` CLI 靠 `~/.docker/config.json` 的 `currentContext`(本机是 `wsl`)找到 daemon,**Testcontainers 1.21.4 不读 docker context** —— 实测日志里 `Attempted configurations were:` 后面是空的,它只试了 docker-machine 就放弃了。这是两套独立的发现机制,CLI 能连不代表 Testcontainers 能连。
+
+**处理**:`~/.testcontainers.properties` 里写一行(已配好):
+
+```properties
+docker.host=tcp://localhost:12375
+```
+
+配完 `cd backend && mvn verify` 不需要任何环境变量就能跑。
+
+**为什么不进仓库**:这是**每台机器**的事实,不是项目的事实。写进 `src/test/resources/testcontainers.properties` 或 surefire 的 `<environmentVariables>` 会把这台机器的端口强加给所有人,别人用 Docker Desktop 时反而被写死。同理也不要在 `scripts/*.mjs` 里硬塞 `DOCKER_HOST` —— 那只能救走脚本的入口,救不了直接敲 `mvn` 的场景。
+
+**教训**:10.1 原先写着"Testcontainers 能自动识别 docker context,连 `DOCKER_HOST` 都不用配",而写那句时项目里**一个 Testcontainers 测试都没有**。没跑过的结论不要写成事实 —— 要么当场验证,要么标成待验证项。
 
 ## 十一、制品存储
 

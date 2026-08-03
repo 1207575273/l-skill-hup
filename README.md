@@ -132,4 +132,5 @@ Docker Engine 装在 WSL 发行版 `Ubuntu-20.04` 里,dockerd 原生监听 `127.
 - [.claude/CLAUDE.md](.claude/CLAUDE.md) —— 工程宪法:技术栈、目录、TDD、质量防线、安全底线、踩坑点
 - [backend/CLAUDE.md](backend/CLAUDE.md) —— 后端细则:轻量 DDD 边界、MyBatis、Flyway、日志规范、ArchUnit
 - [frontend/CLAUDE.md](frontend/CLAUDE.md) —— 前端细则:状态三层分工、Tailwind 4、API 层
+- [业务建模与接口契约](docs/20260802224934_业务建模与接口契约.md) —— 业务侧单一事实源:领域模型、表结构、业务规则、接口清单、OpenAPI
 - [docs/](docs/) —— 设计方案与技术决策记录,归集规范见 [docs/README.md](docs/README.md)
