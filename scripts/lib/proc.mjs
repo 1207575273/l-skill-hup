@@ -25,6 +25,26 @@ const quoteForShell = (arg) => {
 
 const prepare = (args) => args.map(quoteForShell)
 
+/**
+ * 让子进程里的 JVM 用 UTF-8 写 stdout / stderr。
+ *
+ * Windows 上 `stdout.encoding` 默认取 ANSI 代码页(中文机器是 GBK),而 `file.encoding` 从 JDK 18
+ * 起恒为 UTF-8 —— 这两个不一致正是乱码的来源:应用的 logback 按 UTF-8 编码写出,Maven 把它解码后
+ * 又按 GBK 写到自己的 stdout,于是我们这边按 UTF-8 读就成了乱码。
+ *
+ * **这不是可选的加固,是 capture / spawnLabeled 的前提**:那两个函数都调 `setEncoding('utf8')`,
+ * 拿 GBK 字节按 UTF-8 解一定出乱码。谁解码谁负责,所以在这里注入而不是让每个调用方记得传。
+ *
+ * 用追加而不是覆盖:`MAVEN_OPTS` 可能已经被人设了别的东西(代理、内存),整个替掉会悄悄失效。
+ */
+const withUtf8JvmOutput = (env) => {
+  const existing = process.env.MAVEN_OPTS ?? ''
+  return {
+    ...env,
+    MAVEN_OPTS: `${existing} -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8`.trim(),
+  }
+}
+
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
@@ -34,9 +54,14 @@ export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  */
 export function run(command, args, { cwd, env, quiet = false } = {}) {
   return new Promise((resolve) => {
+    // stdio 是 inherit,字节不经我们的手、直接落到终端,所以这里要跟随**终端**而不是一律 UTF-8。
+    // 与后端 ConsoleEncodingEnvironmentPostProcessor 是同一条判据:接着真终端(cmd / PowerShell)
+    // 就让 JVM 按平台选,那时终端本身是 GBK,强推 UTF-8 反而制造乱码;没接终端
+    // (Git Bash 的 mintty 走管道、重定向到文件、CI)则一律 UTF-8。
+    const encodingEnv = process.stdout.isTTY ? env : withUtf8JvmOutput(env)
     const child = spawn(command, prepare(args), {
       cwd,
-      env: { ...process.env, ...env },
+      env: { ...process.env, ...encodingEnv },
       stdio: quiet ? 'ignore' : 'inherit',
       shell: useShell,
     })
@@ -54,7 +79,7 @@ export function capture(command, args, { cwd, env } = {}) {
   return new Promise((resolve) => {
     const child = spawn(command, prepare(args), {
       cwd,
-      env: { ...process.env, ...env },
+      env: { ...process.env, ...withUtf8JvmOutput(env) },
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: useShell,
     })
@@ -81,7 +106,7 @@ export function capture(command, args, { cwd, env } = {}) {
 export function spawnLabeled(label, color, command, args, { cwd, env } = {}) {
   const child = spawn(command, prepare(args), {
     cwd,
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...withUtf8JvmOutput(env) },
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: useShell,
   })

@@ -3,4 +3,5 @@
 # META-INF/spring.factories 实测核实,包名从 3.x 的 org.springframework.boot.env.EnvironmentPostProcessor
 # 挪到了 org.springframework.boot 包下(旧包名的接口仍在,但不是 SPI 实际读取的 key)。
 org.springframework.boot.EnvironmentPostProcessor=\
-com.landray.skillhub.infrastructure.config.BootstrapAdminEnvironmentValidator
+com.landray.skillhub.infrastructure.config.BootstrapAdminEnvironmentValidator,\
+com.landray.skillhub.infrastructure.config.ConsoleEncodingEnvironmentPostProcessor

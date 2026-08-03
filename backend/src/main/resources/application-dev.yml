@@ -107,6 +107,12 @@ logging:
     # dev 打 SQL 与参数绑定,prod 一律关掉
     org.mybatis: DEBUG
 
+  charset:
+    # 文件通道恒定 UTF-8,不跟随平台:它是 ECS JSONL,消费者永远是 grep / jq / 日志采集。
+    # 控制台通道刻意不配 —— 交给 ConsoleEncodingEnvironmentPostProcessor 按"有没有接终端"探测,
+    # 在这里写死会把探测结果顶掉(那个类遇到显式配置就完全不插手)。
+    file: UTF-8
+
   pattern:
     console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faded} %clr(%5p) %clr([%X{traceId:-------------}]){magenta} %clr([%12.12t]){faded} %clr(%-44.44logger{43}){cyan} %clr(:){faded} %m%n%wEx"
 
