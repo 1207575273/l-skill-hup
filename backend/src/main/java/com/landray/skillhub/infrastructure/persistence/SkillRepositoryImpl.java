@@ -9,6 +9,7 @@ import java.util.Optional;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
+import com.landray.skillhub.domain.model.Certification;
 import com.landray.skillhub.domain.model.LikePatternEscaper;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillName;
@@ -120,6 +121,12 @@ public class SkillRepositoryImpl implements SkillRepository {
     }
 
     @Override
+    public Optional<SkillVersion> findVersionBySkillIdAndVersion(long skillId, String version) {
+        return Optional.ofNullable(skillMapper.selectVersionBySkillIdAndVersion(skillId, version))
+                .map(SkillRepositoryImpl::toDomain);
+    }
+
+    @Override
     public Optional<String> findVersionArtifactKey(long skillId, long versionId) {
         return Optional.ofNullable(skillMapper.selectVersionArtifactKey(skillId, versionId));
     }
@@ -216,6 +223,12 @@ public class SkillRepositoryImpl implements SkillRepository {
     @Override
     public void updateStatus(long skillId, SkillStatus status) {
         skillMapper.updateStatus(skillId, status.name());
+    }
+
+    @Override
+    public void updateCertification(
+            long versionId, Certification certification, long operatorUserId, String note) {
+        skillMapper.updateCertification(versionId, certification.name(), operatorUserId, note);
     }
 
     @Override

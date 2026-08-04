@@ -203,13 +203,29 @@
         SELECT count(*) FROM skill WHERE id = #{skillId}
     </select>
 
+    <sql id="versionColumns">
+        id, version, size_bytes, file_count, certification,
+        certified_by_user_id, certified_at, certify_note, created_by_user_id, created_at
+    </sql>
+
     <select id="selectVersionsBySkillId" resultType="com.landray.skillhub.infrastructure.persistence.po.SkillVersionRow">
         SELECT
-            id, version, size_bytes, file_count, certification,
-            certified_by_user_id, certified_at, certify_note, created_by_user_id, created_at
+            <include refid="versionColumns" />
         FROM skill_version
         WHERE skill_id = #{skillId}
         ORDER BY created_at DESC, id DESC
+    </select>
+
+    <!--
+      认证接口(POST /skills/{id}/versions/{version}/certify)的定位查询。skill_id + version 联合条件不只是
+      为了查得准 —— 它挡住"用 A skill 的 id 配 B skill 的版本号去改别人的认证状态"这条路,与
+      selectVersionArtifactKey 是同一类边界。uk_skill_version 保证这个组合至多一行。
+    -->
+    <select id="selectVersionBySkillIdAndVersion" resultType="com.landray.skillhub.infrastructure.persistence.po.SkillVersionRow">
+        SELECT
+            <include refid="versionColumns" />
+        FROM skill_version
+        WHERE skill_id = #{skillId} AND version = #{version}
     </select>
 
     <!--
@@ -335,6 +351,23 @@
 
     <update id="updateStatus">
         UPDATE skill SET status = #{status} WHERE id = #{skillId}
+    </update>
+
+    <!--
+      认证状态变更(业务建模文档 5.8)。三件事一起写,不拆:状态、谁改的、什么时候改的。拆开写会出现
+      "状态变了但不知道是谁"的中间态,而那正是事后追查最需要的那个字段。
+
+      certified_at 取库侧 now() 而不是应用传入:审计事实要以库为准,应用机器时钟漂了就会让先后次序讲不清。
+
+      **绝不顺手动 skill.status** —— 撤销认证不下架 skill,两者是不同烈度的处置(5.8)。
+    -->
+    <update id="updateCertification">
+        UPDATE skill_version
+        SET certification        = #{certification},
+            certified_by_user_id = #{operatorUserId},
+            certified_at         = now(),
+            certify_note         = #{note}
+        WHERE id = #{versionId}
     </update>
 
     <!--

@@ -376,4 +376,88 @@ describe('SkillDetailPage', () => {
       })
     })
   })
+
+  // ------------------------------------------------------------------
+  // 认证入口(业务建模文档 5.8):只给 ADMIN,连 owner 都不给
+  // ------------------------------------------------------------------
+
+  function stubDetailAndVersions() {
+    vi.mocked(skillsApi.fetchSkillDetail).mockResolvedValue(buildSkill())
+    vi.mocked(skillsApi.fetchSkillVersions).mockResolvedValue([buildVersionSummary()])
+  }
+
+  it('should_hide_certify_entry_when_viewer_is_normal_user', async () => {
+    stubDetailAndVersions()
+    vi.mocked(authApi.fetchCurrentUser).mockResolvedValue(buildCurrentUser())
+
+    renderPage()
+
+    expect(await screen.findByLabelText('选择版本 1.2.0')).toBeInTheDocument()
+    expect(screen.queryByLabelText('认证版本 1.2.0')).not.toBeInTheDocument()
+  })
+
+  /**
+   * <b>这条是这组测试的重点。</b>owner 能改元数据、能上下架、能删除,唯独不能给自己发认证徽章 ——
+   * 允许了的话整套认证机制当场归零。页面上的 canManage 与 canCertify 刻意是两个变量,这条把它钉住。
+   */
+  it('should_hide_certify_entry_when_viewer_is_owner_but_not_admin', async () => {
+    stubDetailAndVersions()
+    vi.mocked(authApi.fetchCurrentUser).mockResolvedValue(buildCurrentUser({ id: 1 }))
+
+    renderPage()
+
+    // owner 看得到管理操作
+    expect(await screen.findByRole('button', { name: '下架此 skill' })).toBeInTheDocument()
+    // 但看不到认证
+    expect(screen.queryByLabelText('认证版本 1.2.0')).not.toBeInTheDocument()
+  })
+
+  it('should_show_certify_entry_when_viewer_is_admin', async () => {
+    stubDetailAndVersions()
+    vi.mocked(authApi.fetchCurrentUser).mockResolvedValue(buildCurrentUser({ role: 'ADMIN' }))
+
+    renderPage()
+
+    expect(await screen.findByLabelText('认证版本 1.2.0')).toBeInTheDocument()
+  })
+
+  it('should_submit_certification_with_version_string_when_admin_confirms', async () => {
+    stubDetailAndVersions()
+    vi.mocked(authApi.fetchCurrentUser).mockResolvedValue(buildCurrentUser({ role: 'ADMIN' }))
+    vi.mocked(skillsApi.certifySkillVersion).mockResolvedValue(
+      buildVersionSummary({ certification: 'CERTIFIED' }),
+    )
+
+    renderPage()
+    fireEvent.click(await screen.findByLabelText('认证版本 1.2.0'))
+    fireEvent.change(screen.getByLabelText('认证状态'), { target: { value: 'CERTIFIED' } })
+    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+
+    await waitFor(() => {
+      // 传的是版本号而不是 versionId —— 接口路径就是按版本号定位的
+      expect(skillsApi.certifySkillVersion).toHaveBeenCalledWith(42, '1.2.0', {
+        certification: 'CERTIFIED',
+        note: undefined,
+      })
+    })
+  })
+
+  it('should_surface_server_error_when_certify_rejected', async () => {
+    stubDetailAndVersions()
+    vi.mocked(authApi.fetchCurrentUser).mockResolvedValue(buildCurrentUser({ role: 'ADMIN' }))
+    vi.mocked(skillsApi.certifySkillVersion).mockRejectedValue(
+      new ApiError({
+        code: 'CERTIFICATION_DECISION_INVALID',
+        message: '撤销认证必须填写理由',
+        traceId: 't-1',
+      }),
+    )
+
+    renderPage()
+    fireEvent.click(await screen.findByLabelText('认证版本 1.2.0'))
+    fireEvent.change(screen.getByLabelText('认证状态'), { target: { value: 'CERTIFIED' } })
+    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+
+    expect(await screen.findByText('撤销认证必须填写理由')).toBeInTheDocument()
+  })
 })

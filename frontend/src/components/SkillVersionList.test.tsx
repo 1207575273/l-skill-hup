@@ -75,4 +75,54 @@ describe('SkillVersionList', () => {
     expect(screen.getByText('认证已撤销')).toBeInTheDocument()
     expect(screen.getByText('含未脱敏内网地址')).toBeInTheDocument()
   })
+
+  /**
+   * 认证是 ADMIN 专属(5.8)。给普通用户渲染一个点了必然 403 的按钮没有任何价值,所以这一列的存在与否
+   * 完全由"调用方给没给回调"决定 —— 组件自己不去读登录态。
+   */
+  it('should_hide_certify_button_when_no_callback_given', () => {
+    render(
+      <SkillVersionList
+        versions={[buildVersion()]}
+        selectedVersionId={null}
+        onSelectVersion={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: '认证版本 1.0.0' })).not.toBeInTheDocument()
+  })
+
+  it('should_show_certify_button_and_pass_version_back_when_callback_given', () => {
+    const onCertifyVersion = vi.fn()
+    const target = buildVersion()
+    render(
+      <SkillVersionList
+        versions={[target]}
+        selectedVersionId={null}
+        onSelectVersion={vi.fn()}
+        onCertifyVersion={onCertifyVersion}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '认证版本 1.0.0' }))
+
+    expect(onCertifyVersion).toHaveBeenCalledWith(target)
+  })
+
+  /** 认证按钮不该顺带把这一行选中 —— 那会悄悄改掉"快速接入"用的是哪个版本。 */
+  it('should_not_select_version_when_certify_clicked', () => {
+    const onSelectVersion = vi.fn()
+    render(
+      <SkillVersionList
+        versions={[buildVersion()]}
+        selectedVersionId={null}
+        onSelectVersion={onSelectVersion}
+        onCertifyVersion={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '认证版本 1.0.0' }))
+
+    expect(onSelectVersion).not.toHaveBeenCalled()
+  })
 })

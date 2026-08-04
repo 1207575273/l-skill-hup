@@ -10,6 +10,12 @@ export interface SkillVersionListProps {
   /** 当前用于"快速接入"的版本 id;默认是最新版本,用户可以选中历史版本改用它。 */
   readonly selectedVersionId: number | null
   readonly onSelectVersion: (versionId: number) => void
+  /**
+   * ADMIN 的认证入口。**不传就整列不渲染** —— 认证是 ADMIN 专属(5.8),给普通用户看到一个点了必然
+   * 403 的按钮没有任何价值。判断谁是 ADMIN 是调用方的事,这个组件只按"给没给我这个回调"决定渲不渲染,
+   * 不自己去读登录态(frontend/CLAUDE.md 第二节:components 只接 props 渲染)。
+   */
+  readonly onCertifyVersion?: (version: SkillVersionSummary) => void
 }
 
 /**
@@ -24,6 +30,7 @@ export function SkillVersionList({
   versions,
   selectedVersionId,
   onSelectVersion,
+  onCertifyVersion,
 }: SkillVersionListProps) {
   return (
     <ul aria-label="版本列表" className="flex flex-col gap-2">
@@ -59,15 +66,27 @@ export function SkillVersionList({
                 certifyNote={version.certifyNote}
               />
             </div>
-            <Button
-              variant={isSelected ? 'secondary' : 'ghost'}
-              size="sm"
-              disabled={isSelected}
-              aria-label={`选择版本 ${version.version}`}
-              onClick={() => onSelectVersion(version.id)}
-            >
-              {isSelected ? '已选中' : '选择此版本'}
-            </Button>
+            <div className="flex items-center gap-2">
+              {onCertifyVersion && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`认证版本 ${version.version}`}
+                  onClick={() => onCertifyVersion(version)}
+                >
+                  认证
+                </Button>
+              )}
+              <Button
+                variant={isSelected ? 'secondary' : 'ghost'}
+                size="sm"
+                disabled={isSelected}
+                aria-label={`选择版本 ${version.version}`}
+                onClick={() => onSelectVersion(version.id)}
+              >
+                {isSelected ? '已选中' : '选择此版本'}
+              </Button>
+            </div>
           </li>
         )
       })}

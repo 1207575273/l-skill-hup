@@ -299,6 +299,18 @@ export interface SkillVersionSummary {
 }
 
 /**
+ * `POST /skills/{id}/versions/{version}/certify` 的请求体(ADMIN)。
+ *
+ * **`REVOKED` 时 `note` 必填**,而这条规则在类型上表达不出来(TS 的可辨识联合能做,但会让调用方每次都要
+ * 构造带判别字段的对象,得不偿失)。前端表单按同一条规则禁用提交按钮只为少一次往返,**真正的拦截在服务端**
+ * —— 撤销理由会原样进安装脚本的警示文本,是使用者判断"要不要继续装"的唯一依据。
+ */
+export interface CertifyVersionRequest {
+  readonly certification: CertificationStatus
+  readonly note?: string
+}
+
+/**
  * `GET /skills/{id}` 详情里的最新版本(含正文),对应 `SkillVersionDetailResponse.java`。
  *
  * `readmeContent` 非空则优先渲染它,否则渲染 `skillMdContent`——两个字段原样回传,由前端按此规则

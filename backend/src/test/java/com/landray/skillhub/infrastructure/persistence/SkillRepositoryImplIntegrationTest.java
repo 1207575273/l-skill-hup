@@ -874,6 +874,128 @@ class SkillRepositoryImplIntegrationTest {
         }
     }
 
+    // ------------------------------------------------------------------
+    // 认证状态变更(业务建模文档 5.8)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("按 skillId + 版本号定位版本,版本号属于别的 skill 时查不到")
+    void should_scopeVersionLookupToOwningSkill() throws SQLException {
+        long skillId;
+        long otherSkillId;
+        try (Connection c = dataSource.getConnection()) {
+            long owner = insertUser(c, "张三", "80380486");
+            skillId = insertSkill(c, "mine", "我的", "INTERNAL", owner, "PUBLISHED");
+            otherSkillId = insertSkill(c, "yours", "你的", "INTERNAL", owner, "PUBLISHED");
+            attachVersion(c, skillId, "1.0.0", "NONE");
+            attachVersion(c, otherSkillId, "2.0.0", "NONE");
+        }
+
+        assertThat(skillRepository.findVersionBySkillIdAndVersion(skillId, "1.0.0")).isPresent();
+        // 用 A 的 skillId 配 B 的版本号必须查不到 —— 否则就是一条能改到别人认证状态的路径
+        assertThat(skillRepository.findVersionBySkillIdAndVersion(skillId, "2.0.0")).isEmpty();
+        assertThat(skillRepository.findVersionBySkillIdAndVersion(skillId, "9.9.9")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("变更认证时状态、操作者、时间、意见四项一起落库")
+    void should_persistAllCertificationFields_whenCertifying() throws SQLException {
+        long skillId;
+        long operatorId;
+        try (Connection c = dataSource.getConnection()) {
+            operatorId = insertUser(c, "管理员", "80000001");
+            skillId = insertSkill(c, "cert-target", "认证目标", "INTERNAL", operatorId, "PUBLISHED");
+            attachVersion(c, skillId, "1.0.0", "NONE");
+        }
+        long versionId =
+                skillRepository.findVersionBySkillIdAndVersion(skillId, "1.0.0").orElseThrow().id();
+
+        skillRepository.updateCertification(versionId, Certification.REVOKED, operatorId, "存在命令注入风险");
+
+        SkillVersion reloaded =
+                skillRepository.findVersionBySkillIdAndVersion(skillId, "1.0.0").orElseThrow();
+        assertThat(reloaded.certification()).isEqualTo(Certification.REVOKED);
+        assertThat(reloaded.certifiedByUserId()).isEqualTo(operatorId);
+        assertThat(reloaded.certifyNote()).isEqualTo("存在命令注入风险");
+        // certified_at 由库侧 now() 给,不从应用传 —— 这里只断言"确实被写了",不断言具体值
+        assertThat(reloaded.certifiedAt()).isNotNull();
+    }
+
+    /**
+     * 5.8 写死"撤销认证不自动下架 skill"。这条约束没有任何数据库层面的保障,靠的就是 updateCertification
+     * 的 SQL 里不出现 skill 表 —— 一条会失败的测试比一句注释可靠。
+     */
+    @Test
+    @DisplayName("撤销认证不动 skill.status")
+    void should_notChangeSkillStatus_whenRevoking() throws SQLException {
+        long skillId;
+        long operatorId;
+        try (Connection c = dataSource.getConnection()) {
+            operatorId = insertUser(c, "管理员", "80000001");
+            skillId = insertSkill(c, "still-listed", "仍在架上", "INTERNAL", operatorId, "PUBLISHED");
+            attachVersion(c, skillId, "1.0.0", "CERTIFIED");
+        }
+        long versionId =
+                skillRepository.findVersionBySkillIdAndVersion(skillId, "1.0.0").orElseThrow().id();
+
+        skillRepository.updateCertification(versionId, Certification.REVOKED, operatorId, "有问题");
+
+        assertThat(skillRepository.findDetailById(skillId).orElseThrow().status())
+                .isEqualTo(SkillStatus.PUBLISHED);
+    }
+
+    /** 认证挂在版本上不挂在 skill 上(3.6):动一个版本不能波及同一个 skill 的其他版本。 */
+    @Test
+    @DisplayName("认证只作用于目标版本,同 skill 的其他版本不受影响")
+    void should_onlyAffectTargetVersion_whenCertifying() throws SQLException {
+        long skillId;
+        long operatorId;
+        try (Connection c = dataSource.getConnection()) {
+            operatorId = insertUser(c, "管理员", "80000001");
+            skillId = insertSkill(c, "multi-version", "多版本", "INTERNAL", operatorId, "PUBLISHED");
+            attachVersion(c, skillId, "1.0.0", "NONE");
+            attachVersion(c, skillId, "2.0.0", "NONE");
+        }
+        long firstVersionId =
+                skillRepository.findVersionBySkillIdAndVersion(skillId, "1.0.0").orElseThrow().id();
+
+        skillRepository.updateCertification(firstVersionId, Certification.CERTIFIED, operatorId, null);
+
+        assertThat(skillRepository
+                        .findVersionBySkillIdAndVersion(skillId, "1.0.0")
+                        .orElseThrow()
+                        .certification())
+                .isEqualTo(Certification.CERTIFIED);
+        assertThat(skillRepository
+                        .findVersionBySkillIdAndVersion(skillId, "2.0.0")
+                        .orElseThrow()
+                        .certification())
+                .isEqualTo(Certification.NONE);
+    }
+
+    /** 改回 NONE 时旧的撤销理由必须一起清掉,否则页面上会留着一条与当前状态矛盾的说明。 */
+    @Test
+    @DisplayName("改回 NONE 时清掉旧的撤销理由")
+    void should_clearNote_whenResettingToNone() throws SQLException {
+        long skillId;
+        long operatorId;
+        try (Connection c = dataSource.getConnection()) {
+            operatorId = insertUser(c, "管理员", "80000001");
+            skillId = insertSkill(c, "reset-target", "重置目标", "INTERNAL", operatorId, "PUBLISHED");
+            attachVersion(c, skillId, "1.0.0", "NONE");
+        }
+        long versionId =
+                skillRepository.findVersionBySkillIdAndVersion(skillId, "1.0.0").orElseThrow().id();
+        skillRepository.updateCertification(versionId, Certification.REVOKED, operatorId, "误判的理由");
+
+        skillRepository.updateCertification(versionId, Certification.NONE, operatorId, null);
+
+        SkillVersion reloaded =
+                skillRepository.findVersionBySkillIdAndVersion(skillId, "1.0.0").orElseThrow();
+        assertThat(reloaded.certification()).isEqualTo(Certification.NONE);
+        assertThat(reloaded.certifyNote()).isNull();
+    }
+
     private SkillSearchCriteria defaultCriteria() {
         return new SkillSearchCriteria(null, List.of(), false, null, null, SkillSortOption.LATEST, 1, 20);
     }

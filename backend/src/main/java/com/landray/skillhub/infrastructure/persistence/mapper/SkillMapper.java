@@ -59,6 +59,10 @@ public interface SkillMapper {
 
     List<SkillVersionRow> selectVersionsBySkillId(@Param("skillId") long skillId);
 
+    /** 见 {@code SkillRepository#findVersionBySkillIdAndVersion}:联合条件挡住"用 A 的 id 配 B 的版本号"。 */
+    SkillVersionRow selectVersionBySkillIdAndVersion(
+            @Param("skillId") long skillId, @Param("version") String version);
+
     /** 见 {@code SkillRepository#findVersionArtifactKey} 类注释:{@code skillId}/{@code versionId} 联合条件。 */
     String selectVersionArtifactKey(@Param("skillId") long skillId, @Param("versionId") long versionId);
 
@@ -91,6 +95,13 @@ public interface SkillMapper {
             @Param("skillId") long skillId, @Param("displayName") String displayName, @Param("source") String source);
 
     void updateStatus(@Param("skillId") long skillId, @Param("status") String status);
+
+    /** {@code certified_at} 由 SQL 侧的 {@code now()} 给,不从应用侧传时间——理由见 {@code SkillRepository}。 */
+    void updateCertification(
+            @Param("versionId") long versionId,
+            @Param("certification") String certification,
+            @Param("operatorUserId") long operatorUserId,
+            @Param("note") String note);
 
     List<String> selectVersionArtifactKeys(@Param("skillId") long skillId);
 

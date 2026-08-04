@@ -7,6 +7,7 @@ import type {
 } from '../api/skills'
 import {
   addSkillComment,
+  certifySkillVersion,
   deleteSkill,
   deleteSkillComment,
   precheckSkillPackage,
@@ -16,7 +17,7 @@ import {
   unlistSkill,
   updateSkillMetadata,
 } from '../api/skills'
-import type { SkillDetail, UpdateSkillPayload } from '../api/types'
+import type { CertifyVersionRequest, SkillDetail, UpdateSkillPayload } from '../api/types'
 
 /**
  * skill 写侧变更钩子。**失效范围是这个文件的核心信息**——发布/改版/下架任一动作漏标了该失效的
@@ -154,6 +155,32 @@ export function useDeleteSkillComment(skillId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: skillKeys.commentsAll(skillId) })
       queryClient.invalidateQueries({ queryKey: skillKeys.detail(skillId) })
+    },
+  })
+}
+
+/**
+ * `POST /skills/{id}/versions/{version}/certify`(ADMIN),认证或撤销某个版本。
+ *
+ * **失效范围是这个 hook 唯一容易写错的地方。** 认证挂在版本上,但它的影响面比"版本列表"大得多:
+ * - `versions(skillId)` —— 那一行的徽章要变;
+ * - `detail(skillId)` —— 详情页顶部的徽章取自 `latestVersion`,改的正好是最新版时它也要变;
+ * - `lists()` —— 列表卡片带认证徽章,而且 `certifiedOnly` 筛选的结果集会变;
+ * - `managedAll()` —— 管理表格里有 certification 列。
+ *
+ * 只失效 `versions` 是最自然也最错的写法:版本列表当场刷新了,页面顶部的徽章却还挂着旧状态,
+ * 而这种不一致没有任何报错。
+ */
+export function useCertifyVersion(skillId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ version, request }: { version: string; request: CertifyVersionRequest }) =>
+      certifySkillVersion(skillId, version, request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: skillKeys.versions(skillId) })
+      queryClient.invalidateQueries({ queryKey: skillKeys.detail(skillId) })
+      queryClient.invalidateQueries({ queryKey: skillKeys.lists() })
+      queryClient.invalidateQueries({ queryKey: skillKeys.managedAll() })
     },
   })
 }

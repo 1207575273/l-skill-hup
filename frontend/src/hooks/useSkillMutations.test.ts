@@ -2,9 +2,10 @@ import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { skillKeys, tagKeys } from '../api/queryKeys'
 import * as skillsApi from '../api/skills'
-import type { SkillDetail, SkillPrecheckResult } from '../api/types'
+import type { SkillDetail, SkillPrecheckResult, SkillVersionSummary } from '../api/types'
 import { createQueryWrapper, createTestQueryClient } from './queryTestUtils.test-support'
 import {
+  useCertifyVersion,
   usePrecheckSkillPackage,
   usePublishSkill,
   usePublishSkillVersion,
@@ -21,6 +22,7 @@ const mockedPublishSkillVersion = vi.mocked(skillsApi.publishSkillVersion)
 const mockedUpdateSkillMetadata = vi.mocked(skillsApi.updateSkillMetadata)
 const mockedUnlistSkill = vi.mocked(skillsApi.unlistSkill)
 const mockedRelistSkill = vi.mocked(skillsApi.relistSkill)
+const mockedCertifySkillVersion = vi.mocked(skillsApi.certifySkillVersion)
 
 const SKILL_DETAIL = { id: 1 } as SkillDetail
 
@@ -150,5 +152,36 @@ describe('useSkillMutations', () => {
     })
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: skillKeys.lists() })
+  })
+
+  /**
+   * 认证挂在版本上,但影响面比"版本列表"大得多:详情页顶部的徽章取自 latestVersion、列表卡片带徽章、
+   * certifiedOnly 筛选的结果集会变、管理表格有 certification 列。只失效 versions 是最自然也最错的写法 ——
+   * 版本列表当场刷新了,页面顶部的徽章却还挂着旧状态,而这种不一致没有任何报错。
+   */
+  it('should_invalidate_versions_detail_lists_and_managed_when_certifyVersion_succeeds', async () => {
+    mockedCertifySkillVersion.mockResolvedValue({} as SkillVersionSummary)
+    const queryClient = createTestQueryClient()
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+
+    const { result } = renderHook(() => useCertifyVersion(1), {
+      wrapper: createQueryWrapper(queryClient),
+    })
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        version: '1.0.0',
+        request: { certification: 'REVOKED', note: '有问题' },
+      })
+    })
+
+    expect(mockedCertifySkillVersion).toHaveBeenCalledWith(1, '1.0.0', {
+      certification: 'REVOKED',
+      note: '有问题',
+    })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: skillKeys.versions(1) })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: skillKeys.detail(1) })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: skillKeys.lists() })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: skillKeys.managedAll() })
   })
 })

@@ -1,8 +1,10 @@
 package com.landray.skillhub.interfaces.rest.skill;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
@@ -20,20 +22,24 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.landray.skillhub.application.SkillApplicationService;
+import com.landray.skillhub.application.SkillCertificationApplicationService;
 import com.landray.skillhub.application.auth.AuthApplicationService;
 import com.landray.skillhub.application.auth.AuthenticatedUser;
 import com.landray.skillhub.application.upload.PrecheckResult;
 import com.landray.skillhub.application.upload.SkillUploadApplicationService;
 import com.landray.skillhub.domain.model.Certification;
+import com.landray.skillhub.domain.model.CertificationDecision;
 import com.landray.skillhub.domain.model.NotPreviewableReason;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillName;
@@ -83,6 +89,9 @@ class SkillControllerTest {
 
     @MockitoBean
     private SkillUploadApplicationService skillUploadApplicationService;
+
+    @MockitoBean
+    private SkillCertificationApplicationService skillCertificationApplicationService;
 
     /**
      * 这四个只读接口是匿名可访问的(业务建模文档 5.16 权限矩阵)。但 {@code AuthenticationInterceptor}
@@ -526,5 +535,121 @@ class SkillControllerTest {
         // 资源级的 owner/ADMIN 判断在 application 层,但"登录了没有"必须在进去之前就拦下 ——
         // 否则未登录请求也会走到删除逻辑里,只是最后被另一处拒绝,白白多一层暴露面。
         verify(skillApplicationService, never()).delete(anyLong(), any());
+    }
+
+    // ------------------------------------------------------------------
+    // 认证(业务建模文档 5.8):本类唯一标 @RequireAdmin 的端点
+    // ------------------------------------------------------------------
+
+    private static SkillVersion certifiedVersion(Certification certification, String note) {
+        return new SkillVersion(
+                10L, 1L, "1.0.0", null, null, null, 1024L, 3, List.of(), null, null, null,
+                certification, 9L, Instant.parse("2026-01-01T00:00:00Z"), note, 2L,
+                Instant.parse("2026-01-01T00:00:00Z"));
+    }
+
+    @Test
+    @DisplayName("认证:ADMIN 提交后按版本号透传给 application 层")
+    void should_certifyVersion_when_callerIsAdmin() throws Exception {
+        stubValidSession(9L, UserRole.ADMIN);
+        when(skillCertificationApplicationService.certify(anyLong(), anyString(), any(), any()))
+                .thenReturn(certifiedVersion(Certification.CERTIFIED, "看过了"));
+
+        mockMvc.perform(post("/api/v1/skills/1/versions/1.0.0/certify")
+                        .header("Authorization", "Bearer " + VALID_TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"certification\":\"CERTIFIED\",\"note\":\"看过了\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.certification").value("CERTIFIED"))
+                .andExpect(jsonPath("$.certifyNote").value("看过了"));
+
+        ArgumentCaptor<CertificationDecision> decision = ArgumentCaptor.forClass(CertificationDecision.class);
+        verify(skillCertificationApplicationService)
+                .certify(eq(1L), eq("1.0.0"), decision.capture(), any());
+        assertThat(decision.getValue().certification()).isEqualTo(Certification.CERTIFIED);
+    }
+
+    /**
+     * 认证是平台治理动作,<b>连 skill 的 owner 都不该放行</b> —— 作者给自己发认证徽章会让整个机制当场归零。
+     * 所以这条端点标的是 {@code @RequireAdmin} 而不是本类其余写端点用的 {@code @RequireLogin}。
+     */
+    @Test
+    @DisplayName("认证:普通用户 403,哪怕他是这个 skill 的 owner")
+    void should_rejectCertify_when_callerIsNotAdmin() throws Exception {
+        stubValidSession(2L, UserRole.USER);
+
+        mockMvc.perform(post("/api/v1/skills/1/versions/1.0.0/certify")
+                        .header("Authorization", "Bearer " + VALID_TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"certification\":\"CERTIFIED\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"));
+
+        verify(skillCertificationApplicationService, never())
+                .certify(anyLong(), anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("认证:未登录 401,不进 application 层")
+    void should_rejectCertify_when_tokenMissing() throws Exception {
+        mockMvc.perform(post("/api/v1/skills/1/versions/1.0.0/certify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"certification\":\"CERTIFIED\"}"))
+                .andExpect(status().isUnauthorized());
+
+        verify(skillCertificationApplicationService, never())
+                .certify(anyLong(), anyString(), any(), any());
+    }
+
+    /**
+     * 撤销没填理由必须是 4xx 而不是 500:那是 ADMIN 少填了一个字段,不是服务器坏了(backend/CLAUDE.md 6.2)。
+     * 规则本身在 CertificationDecision 里,这条只验它确实被 GlobalExceptionHandler 映射成了客户端错误。
+     */
+    @Test
+    @DisplayName("认证:撤销没填理由返回 4xx,不落到 application 层")
+    void should_rejectRevoke_when_noteMissing() throws Exception {
+        stubValidSession(9L, UserRole.ADMIN);
+
+        mockMvc.perform(post("/api/v1/skills/1/versions/1.0.0/certify")
+                        .header("Authorization", "Bearer " + VALID_TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"certification\":\"REVOKED\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("CERTIFICATION_DECISION_INVALID"));
+
+        verify(skillCertificationApplicationService, never())
+                .certify(anyLong(), anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("认证:状态值不认识返回 400")
+    void should_rejectCertify_when_certificationUnknown() throws Exception {
+        stubValidSession(9L, UserRole.ADMIN);
+
+        mockMvc.perform(post("/api/v1/skills/1/versions/1.0.0/certify")
+                        .header("Authorization", "Bearer " + VALID_TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"certification\":\"APPROVED\"}"))
+                .andExpect(status().isBadRequest());
+
+        verify(skillCertificationApplicationService, never())
+                .certify(anyLong(), anyString(), any(), any());
+    }
+
+    /** 版本号里带点,路径变量默认会把 ".0" 当后缀截掉——Spring 6 起默认关掉了后缀匹配,这条钉住它没被改回来。 */
+    @Test
+    @DisplayName("认证:带点的版本号原样传到 application 层,不被当成扩展名截断")
+    void should_keepDottedVersion_when_bindingPathVariable() throws Exception {
+        stubValidSession(9L, UserRole.ADMIN);
+        when(skillCertificationApplicationService.certify(anyLong(), anyString(), any(), any()))
+                .thenReturn(certifiedVersion(Certification.CERTIFIED, null));
+
+        mockMvc.perform(post("/api/v1/skills/1/versions/10.2.13/certify")
+                        .header("Authorization", "Bearer " + VALID_TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"certification\":\"CERTIFIED\"}"))
+                .andExpect(status().isOk());
+
+        verify(skillCertificationApplicationService).certify(eq(1L), eq("10.2.13"), any(), any());
     }
 }

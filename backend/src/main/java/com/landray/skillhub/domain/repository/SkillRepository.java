@@ -3,6 +3,7 @@ package com.landray.skillhub.domain.repository;
 import java.util.List;
 import java.util.Optional;
 
+import com.landray.skillhub.domain.model.Certification;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillName;
 import com.landray.skillhub.domain.model.SkillSearchCriteria;
@@ -34,6 +35,15 @@ public interface SkillRepository {
 
     /** 某个 skill 的全部版本,按发布时间倒序,含各版本认证状态。不含正文(见 {@link SkillVersion} 类注释)。 */
     List<SkillVersion> findVersionsBySkillId(long skillId);
+
+    /**
+     * 按 skill + 版本号定位一个版本。认证接口的路径参数是版本号({@code /versions/{version}/certify})而不是
+     * versionId,理由同下载接口:版本号是人看得懂、贴在群里也不会指错的标识。
+     *
+     * <p>{@code WHERE skill_id = ? AND version = ?} 的联合条件同时承担鉴权外的一道边界——不能用 A skill 的 id
+     * 配 B skill 的版本号改到别人的认证状态。
+     */
+    Optional<SkillVersion> findVersionBySkillIdAndVersion(long skillId, String version);
 
     /**
      * 版本文件预览接口的唯一输入:某个 skill 的某个具体版本对应的 {@code artifact_key}。
@@ -128,4 +138,16 @@ public interface SkillRepository {
 
     /** 下架 / 恢复,只改 status,不动版本、评论、表态、收藏(业务建模文档 5.15)。 */
     void updateStatus(long skillId, SkillStatus status);
+
+    /**
+     * 变更某个版本的认证状态,同时写 {@code certified_by_user_id} 与 {@code certified_at}
+     * (业务建模文档 5.8:"每次变更"都要留痕,不只是通过的那次)。
+     *
+     * <p>{@code certified_at} 取数据库的 {@code now()} 而不是应用侧时间:审计事实要以库为准,应用机器的时钟
+     * 漂了就会让"谁先谁后"讲不清。
+     *
+     * <p><b>只写这一张表的这几列。</b>撤销认证不下架 skill(5.8:两者是不同烈度的处置),所以这里绝不能顺手
+     * 去动 {@code skill.status}。
+     */
+    void updateCertification(long versionId, Certification certification, long operatorUserId, String note);
 }

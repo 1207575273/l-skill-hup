@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { useParams } from 'react-router'
 import type { ApiError } from '../api/client'
+import type { SkillVersionSummary } from '../api/types'
 import { pickAvatarColor } from '../components/avatarColor'
 import { Button } from '../components/Button'
 import { CertificationBadge } from '../components/CertificationBadge'
+import { CertifyVersionDialog } from '../components/CertifyVersionDialog'
 import { cx } from '../components/classNames'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
@@ -25,7 +27,12 @@ import { TagChip } from '../components/TagChip'
 import { formatDateOnly } from '../components/textFormat'
 import { useCurrentUser } from '../hooks/useAuthQueries'
 import { useInstallCartStore } from '../hooks/useInstallCartStore'
-import { useRelistSkill, useUnlistSkill, useUpdateSkillMetadata } from '../hooks/useSkillMutations'
+import {
+  useCertifyVersion,
+  useRelistSkill,
+  useUnlistSkill,
+  useUpdateSkillMetadata,
+} from '../hooks/useSkillMutations'
 import { useSkillDetail, useSkillFileContent, useSkillVersions } from '../hooks/useSkillQueries'
 import { useTags } from '../hooks/useTagQueries'
 
@@ -52,9 +59,11 @@ export default function SkillDetailPage() {
   const unlistSkill = useUnlistSkill(skillId ?? 0)
   const relistSkill = useRelistSkill(skillId ?? 0)
   const updateMetadata = useUpdateSkillMetadata(skillId ?? 0)
+  const certifyVersion = useCertifyVersion(skillId ?? 0)
 
   const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null)
   const [isEditOpen, setIsEditOpen] = useState(false)
+  const [certifyTarget, setCertifyTarget] = useState<SkillVersionSummary | null>(null)
 
   const cartItems = useInstallCartStore((state) => state.items)
   const toggleCartItem = useInstallCartStore((state) => state.toggleItem)
@@ -109,6 +118,9 @@ export default function SkillDetailPage() {
   const canManage = Boolean(
     currentUser && (currentUser.role === 'ADMIN' || currentUser.id === skill.owner?.userId),
   )
+  // 认证是平台治理动作,**只看 ADMIN,不看 owner**(5.8):作者给自己发认证徽章会让整套机制当场归零。
+  // 与 canManage 刻意分成两个变量 —— 合成一个"能管理"会让这条区别在某次改动里被顺手抹掉。
+  const canCertify = currentUser?.role === 'ADMIN'
 
   function handleToggleListing() {
     if (skill.status === 'PUBLISHED') {
@@ -273,6 +285,7 @@ export default function SkillDetailPage() {
             versions={versions}
             selectedVersionId={effectiveVersionId}
             onSelectVersion={setSelectedVersionId}
+            onCertifyVersion={canCertify ? setCertifyTarget : undefined}
           />
         )}
       </section>
@@ -330,6 +343,32 @@ export default function SkillDetailPage() {
           />
         ) : null}
       </Modal>
+
+      {/* 认证弹窗放在最外层而不是塞进版本列表那一节:它是模态的,DOM 位置与视觉位置无关,
+          而放在 section 里会让那一节的语义(版本列表)混进一个不属于它的东西。 */}
+      <CertifyVersionDialog
+        open={certifyTarget !== null}
+        version={certifyTarget}
+        submitting={certifyVersion.isPending}
+        error={certifyVersion.error as ApiError | null}
+        onClose={() => {
+          setCertifyTarget(null)
+          certifyVersion.reset()
+        }}
+        onSubmit={(certification, note) => {
+          if (certifyTarget === null) {
+            return
+          }
+          certifyVersion.mutate(
+            {
+              version: certifyTarget.version,
+              // 空意见传 undefined 而不是空串:服务端会把空白归一化成 null,前端先说清楚"没有"更直接
+              request: { certification, note: note === '' ? undefined : note },
+            },
+            { onSuccess: () => setCertifyTarget(null) },
+          )
+        }}
+      />
     </div>
   )
 }

@@ -18,20 +18,26 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.landray.skillhub.application.SkillApplicationService;
+import com.landray.skillhub.application.SkillCertificationApplicationService;
 import com.landray.skillhub.application.auth.AuthenticatedUser;
 import com.landray.skillhub.application.upload.NewSkillCommand;
 import com.landray.skillhub.application.upload.NewVersionCommand;
 import com.landray.skillhub.application.upload.PrecheckResult;
 import com.landray.skillhub.application.upload.SkillUploadApplicationService;
+import com.landray.skillhub.domain.model.CertificationDecision;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillVersionFileContent;
 import com.landray.skillhub.interfaces.rest.auth.CurrentUserAccessor;
+import com.landray.skillhub.interfaces.rest.auth.RequireAdmin;
 import com.landray.skillhub.interfaces.rest.auth.RequireLogin;
 import com.landray.skillhub.shared.model.PageResult;
 
 /**
  * skill 接口:读侧(含版本文件预览)匿名可用(业务建模文档 5.16 权限矩阵),写侧(precheck / 发布 / 改元数据 /
  * 上下架)一律 {@link RequireLogin},资源级的 owner/ADMIN 判断在 application 层完成(controller 不做业务判断)。
+ *
+ * <p><b>唯一的例外是认证</b>({@code /versions/{version}/certify}):那是平台治理动作,直接标
+ * {@link RequireAdmin},不走"登录后再由 application 判 owner"那条路——认证不该对 owner 开放,理由见该方法注释。
  *
  * <p>薄控制器:只收参、调 application、转 DTO,不写业务判断、不碰 SQL(backend/CLAUDE.md 第一节)。
  */
@@ -41,14 +47,17 @@ public class SkillController {
 
     private final SkillApplicationService skillApplicationService;
     private final SkillUploadApplicationService skillUploadApplicationService;
+    private final SkillCertificationApplicationService skillCertificationApplicationService;
     private final CurrentUserAccessor currentUserAccessor;
 
     public SkillController(
             SkillApplicationService skillApplicationService,
             SkillUploadApplicationService skillUploadApplicationService,
+            SkillCertificationApplicationService skillCertificationApplicationService,
             CurrentUserAccessor currentUserAccessor) {
         this.skillApplicationService = skillApplicationService;
         this.skillUploadApplicationService = skillUploadApplicationService;
+        this.skillCertificationApplicationService = skillCertificationApplicationService;
         this.currentUserAccessor = currentUserAccessor;
     }
 
@@ -197,6 +206,25 @@ public class SkillController {
     public void deleteSkill(@PathVariable long id) {
         AuthenticatedUser actingUser = currentUserAccessor.require();
         skillApplicationService.delete(id, actingUser);
+    }
+
+    /**
+     * 认证或撤销某个版本(业务建模文档 5.8、6.2)。
+     *
+     * <p>本类里唯一标 {@link RequireAdmin} 的端点:其余写动作都是 owner / ADMIN 都能做,资源级判断落在
+     * application 层;而认证是纯平台治理动作,连"是不是自己的 skill"都不该放行——作者给自己发认证徽章
+     * 会让整个认证机制当场归零。
+     *
+     * <p>路径参数是<b>版本号</b>而不是 versionId,与下载接口一致:版本号是人看得懂、贴在群里也不会指错的标识。
+     */
+    @RequireAdmin
+    @PostMapping("/{id}/versions/{version}/certify")
+    public SkillVersionResponse certifyVersion(
+            @PathVariable long id, @PathVariable String version, @Valid @RequestBody CertifyVersionRequest request) {
+        AuthenticatedUser admin = currentUserAccessor.require();
+        CertificationDecision decision = CertificationDecision.of(request.certification(), request.note());
+        return SkillVersionResponse.from(
+                skillCertificationApplicationService.certify(id, version, decision, admin));
     }
 
     private byte[] readBytes(MultipartFile file) {

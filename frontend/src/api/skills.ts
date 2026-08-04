@@ -1,5 +1,6 @@
 import { API_BASE_URL, apiGet, apiPost, apiPostFormData } from './client'
 import type {
+  CertifyVersionRequest,
   ManagedSkill,
   PageResponse,
   SkillCommentItem,
@@ -218,6 +219,23 @@ export function deleteSkill(skillId: number): Promise<void> {
  * `<a href>` / `window.location.assign` 触发保存,`SkillDownloadController` 直接流式写响应体,
  * fetch 拿到手还要自己重新触发一次保存,没有必要绕这一圈。
  */
+/**
+ * `POST /skills/{id}/versions/{version}/certify`(ADMIN),认证或撤销某个版本。
+ *
+ * 路径里的 version 必须 encode:版本号带点,虽然 SemVer 本身不含 URL 保留字符,但这个值是从服务端拿到的
+ * 字符串,不该假定它永远干净。
+ */
+export function certifySkillVersion(
+  skillId: number,
+  version: string,
+  request: CertifyVersionRequest,
+): Promise<SkillVersionSummary> {
+  return apiPost<SkillVersionSummary>(
+    `/skills/${skillId}/versions/${encodeURIComponent(version)}/certify`,
+    request,
+  )
+}
+
 export function buildSkillDownloadUrl(skillId: number, version: string): string {
   return `${API_BASE_URL}/skills/${skillId}/versions/${encodeURIComponent(version)}/download`
 }
