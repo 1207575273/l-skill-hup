@@ -30,7 +30,7 @@ vi.mock('../api/install')
 vi.mock('../api/skills')
 vi.mock('../api/tags')
 
-function renderAt(path: string) {
+function renderAt(path: string, role: 'USER' | 'ADMIN' = 'USER') {
   vi.mocked(authApi.fetchAuthProviders).mockResolvedValue({
     providers: ['LOCAL'],
     localRegisterEnabled: false,
@@ -58,7 +58,7 @@ function renderAt(path: string) {
     employeeNo: null,
     email: null,
     avatarUrl: null,
-    role: 'USER',
+    role,
     identities: [],
   })
   const queryClient = new QueryClient({
@@ -111,6 +111,19 @@ describe('AppRouter', () => {
     renderAt('/manage')
 
     expect(await screen.findByRole('heading', { level: 1, name: '管理 skill' })).toBeInTheDocument()
+  })
+
+  /**
+   * `/manage/tags` 是 `/manage` 的子路径,而 `/manage` 那条路由没写 `end`——路由表里两条同时匹配的话,
+   * 落到哪个页面取决于声明顺序,是那种"改一下顺序就悄悄换页"的脆弱。这条测试把它钉死。
+   *
+   * <p>覆盖掉 `renderAt` 默认的 USER 角色:标签治理页对非 ADMIN 渲染的是"需要管理员权限",
+   * 那样验不出路由有没有挂对。
+   */
+  it('should_render_tag_manage_page_when_path_is_/manage/tags', async () => {
+    renderAt('/manage/tags', 'ADMIN')
+
+    expect(await screen.findByRole('heading', { level: 1, name: '标签治理' })).toBeInTheDocument()
   })
 
   it('should_render_install_page_when_path_is_/install', () => {

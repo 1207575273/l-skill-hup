@@ -22,8 +22,42 @@ public interface TagMapper {
 
     Tag selectByName(@Param("name") String name);
 
+    Tag selectById(@Param("tagId") long tagId);
+
+    /**
+     * 输入联想。{@code keyword} 由调用方归一化并转小写后传入,SQL 侧对 {@code t.name} 也做 {@code lower()}
+     * 再匹配,保证大小写不敏感。
+     */
+    List<TagRow> selectSuggestions(
+            @Param("keyword") String keyword, @Param("kind") TagKind kind, @Param("limit") int limit);
+
     /** 见 {@code AppUserMapper} 类注释:{@code useGeneratedKeys} 需要把生成的 id 写回参数 Map。 */
     int insertFree(Map<String, Object> params);
+
+    /** 同 {@link #insertFree},走 Map 是为了取回自增 id。{@code kind} 由调用方给,不写死。 */
+    int insertTag(Map<String, Object> params);
+
+    int updateTag(
+            @Param("tagId") long tagId,
+            @Param("name") String name,
+            @Param("kind") TagKind kind,
+            @Param("description") String description,
+            @Param("sortOrder") int sortOrder);
+
+    /** 引用数含已下架 skill,理由见 {@code TagRepository#countReferences}。 */
+    long countReferences(@Param("tagId") long tagId);
+
+    List<String> selectSkillNamesReferencing(@Param("tagId") long tagId, @Param("limit") int limit);
+
+    List<String> selectSkillNamesAtCuratedLimit(
+            @Param("tagId") long tagId, @Param("curatedLimit") int curatedLimit, @Param("limit") int limit);
+
+    /** 只插不存在的那部分,跳过已经挂着目标词条的 skill,避免撞 {@code uk_skill_tag}。 */
+    int insertMigratedReferences(@Param("fromTagId") long fromTagId, @Param("toTagId") long toTagId);
+
+    int deleteReferences(@Param("tagId") long tagId);
+
+    int deleteTag(@Param("tagId") long tagId);
 
     /**
      * 单条语句原子完成"仅当这个 FREE 标签此刻已无任何 skill_tag 引用"的判断与删除,不做先查后删——避免两步之间

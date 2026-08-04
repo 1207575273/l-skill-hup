@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import com.landray.skillhub.domain.exception.TagSelectionInvalidException;
 import com.landray.skillhub.domain.model.Tag;
 import com.landray.skillhub.domain.model.TagKind;
+import com.landray.skillhub.domain.model.TagName;
 import com.landray.skillhub.domain.repository.SkillRepository;
 import com.landray.skillhub.domain.repository.TagRepository;
 
@@ -33,9 +34,8 @@ public class SkillTagAssignmentService {
      * 哪一类,却被拦在门外,只能随便挑一个凑数。<b>随手凑的分类比没有分类更糟</b> —— 它污染导航,而且没人会
      * 回头订正一个"看起来已经填了"的字段。
      */
-    private static final int MAX_CURATED = 3;
-    private static final int MAX_FREE = 10;
-    private static final int MAX_FREE_TAG_NAME_LENGTH = 16;
+    private static final int MAX_CURATED = TagKind.CURATED.maxPerSkill();
+    private static final int MAX_FREE = TagKind.FREE.maxPerSkill();
 
     private final TagRepository tagRepository;
     private final SkillRepository skillRepository;
@@ -97,24 +97,23 @@ public class SkillTagAssignmentService {
         }
     }
 
-    /** 去首尾空白、折叠中间连续空白、长度上限 16 字符,去重(业务建模文档 5.7)。 */
+    /**
+     * 归一化并去重。归一化规则本身在 {@link TagName} 里,这里只负责整份清单的处理:跳过 null 与纯空白项、
+     * 按归一化<b>之后</b>的值去重。
+     *
+     * <p>空白项跳过而不报错——输入框里多敲一个逗号是手滑,拦下来只会让人反复试。超长则必须报错:那是内容
+     * 本身不合法,静默截断会让作者以为存进去的是完整名字。
+     */
     private List<String> normalizeFreeNames(List<String> freeTagNames) {
         if (freeTagNames == null) {
             return List.of();
         }
         List<String> result = new ArrayList<>();
         for (String raw : freeTagNames) {
-            if (raw == null) {
+            if (raw == null || raw.isBlank()) {
                 continue;
             }
-            String normalized = raw.trim().replaceAll("\\s+", " ");
-            if (normalized.isBlank()) {
-                continue;
-            }
-            if (normalized.length() > MAX_FREE_TAG_NAME_LENGTH) {
-                throw new TagSelectionInvalidException(
-                        "标签名长度不得超过 " + MAX_FREE_TAG_NAME_LENGTH + " 个字符: " + normalized);
-            }
+            String normalized = new TagName(raw).value();
             if (!result.contains(normalized)) {
                 result.add(normalized);
             }

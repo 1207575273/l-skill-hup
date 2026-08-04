@@ -15,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.landray.skillhub.domain.exception.TagNameInvalidException;
 import com.landray.skillhub.domain.exception.TagSelectionInvalidException;
 import com.landray.skillhub.domain.model.Tag;
 import com.landray.skillhub.domain.model.TagKind;
@@ -105,6 +106,11 @@ class SkillTagAssignmentServiceTest {
                 .isInstanceOf(TagSelectionInvalidException.class);
     }
 
+    /**
+     * 抛的是 {@link TagNameInvalidException} 而不是 {@link TagSelectionInvalidException}:名字本身不合法与
+     * "这组标签的数量/类型不对"是两回事,分开给 code 前端才能把提示挂到正确的输入框上。规则实现在
+     * {@code TagName} 值对象里,与 ADMIN 建 CURATED 词条共用同一份。
+     */
     @Test
     @DisplayName("FREE 标签名超过 16 字符时拒绝")
     void should_reject_when_freeTagNameExceeds16Chars() {
@@ -112,7 +118,7 @@ class SkillTagAssignmentServiceTest {
         String longName = "一二三四五六七八九十一二三四五六七";
 
         assertThatThrownBy(() -> service.resolveTagIds(List.of(1L), List.of(longName), 1L))
-                .isInstanceOf(TagSelectionInvalidException.class);
+                .isInstanceOf(TagNameInvalidException.class);
     }
 
     @Test

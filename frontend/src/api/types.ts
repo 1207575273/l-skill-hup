@@ -171,6 +171,49 @@ export interface SkillTag {
   readonly sortOrder: number
 }
 
+/**
+ * `POST /tags` 的请求体。**没有 `kind`**:这条接口只建 CURATED,FREE 词条由用户打标签时自动产生。
+ */
+export interface CreateTagRequest {
+  readonly name: string
+  readonly description?: string
+  readonly sortOrder?: number
+}
+
+/**
+ * `POST /tags/{id}/update` 的请求体。
+ *
+ * `kind` 缺省表示"不动它",不是"改成默认值"——改个描述不该顺手把 kind 也重置了。
+ *
+ * `confirmed` 只对 `CURATED -> FREE` 有意义:那个方向会让一批 skill 从导航消失,服务端第一次会带
+ * 受影响清单返回 `TAG_KIND_CONVERSION_NEEDS_CONFIRMATION`,看过后带 `true` 再提交一次。
+ */
+export interface UpdateTagRequest {
+  readonly name: string
+  readonly kind?: TagKind
+  readonly description?: string
+  readonly sortOrder?: number
+  readonly confirmed?: boolean
+}
+
+/** `POST /tags/{id}/delete` 的请求体。删一个仍被引用的 CURATED 时 `migrateToTagId` 是必填。 */
+export interface DeleteTagRequest {
+  readonly migrateToTagId?: number
+}
+
+/**
+ * 标签治理被拦下时,错误响应 `details` 里的形状。
+ *
+ * 服务端在三种情况下给出受影响 skill 清单:kind 转换的两个方向、删除仍被引用的 CURATED。
+ * 字段是可选的因为三种 code 各带其中一部分,前端按 code 分支后再取。
+ */
+export interface TagGovernanceConflictDetails {
+  readonly affectedSkills?: readonly string[]
+  readonly affectedSkillCount?: number
+  readonly referenceCount?: number
+  readonly curatedLimit?: number
+}
+
 // ==================== skill ====================
 
 /**

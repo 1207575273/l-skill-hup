@@ -5,6 +5,7 @@ import ManagePage from '../pages/ManagePage'
 import RegisterPage from '../pages/RegisterPage'
 import SkillDetailPage from '../pages/SkillDetailPage'
 import SkillListPage from '../pages/SkillListPage'
+import TagManagePage from '../pages/TagManagePage'
 import UploadPage from '../pages/UploadPage'
 import { AppLayout } from './AppLayout'
 
@@ -38,6 +39,8 @@ export default function AppRouter() {
         {/* 管理页自己处理未登录(引导登录),路由不做守卫 —— 与上传页同一套:
             把"要不要登录"的判断放路由表里,会让两处各判一次而且迟早不一致。 */}
         <Route path="/manage" element={<ManagePage />} />
+        {/* 标签治理同样自己处理未登录与非 ADMIN,理由同上:守卫放路由表里会与页面各判一次,迟早不一致。 */}
+        <Route path="/manage/tags" element={<TagManagePage />} />
         <Route path="/install" element={<InstallPage />} />
         <Route path="/login" element={<LoginPage />} />
         {/* 注册页自己按 /auth/providers 的 localRegisterEnabled 决定放不放行 ——

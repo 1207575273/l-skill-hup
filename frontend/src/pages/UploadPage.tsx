@@ -12,6 +12,7 @@ import { CuratedTagPicker } from '../components/CuratedTagPicker'
 import { DuplicateNameDialog } from '../components/DuplicateNameDialog'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { FreeTagInput } from '../components/FreeTagInput'
 import { PackageSourcePicker } from '../components/PackageSourcePicker'
 import { PackageSummary } from '../components/PackageSummary'
 import { PackageViolationList } from '../components/PackageViolationList'
@@ -376,13 +377,10 @@ export default function UploadPage() {
                 />
               )}
             </div>
-            <TextInput
-              label="自由标签"
+            <FreeTagInput
               value={form.freeTagsRaw}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, freeTagsRaw: event.target.value }))
-              }
-              hint={`用逗号分隔,最多 ${MAX_FREE_TAGS} 个,不存在的会自动创建`}
+              onChange={(next) => setForm((prev) => ({ ...prev, freeTagsRaw: next }))}
+              maxTags={MAX_FREE_TAGS}
               errorMessage={formErrors.freeTags}
             />
             <Button type="submit" loading={isSubmitting} fullWidth>

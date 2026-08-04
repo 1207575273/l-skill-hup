@@ -4,20 +4,25 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
 import com.landray.skillhub.domain.model.Tag;
 import com.landray.skillhub.domain.model.TagKind;
+import com.landray.skillhub.domain.model.TagName;
 import com.landray.skillhub.domain.model.TagWithSkillCount;
 import com.landray.skillhub.domain.repository.TagRepository;
 import com.landray.skillhub.infrastructure.persistence.mapper.TagMapper;
 import com.landray.skillhub.infrastructure.persistence.po.TagRow;
+import com.landray.skillhub.shared.exception.ResourceConflictException;
 
 /** {@link TagRepository} 的 MyBatis 实现。 */
 @Repository
 public class TagRepositoryImpl implements TagRepository {
+
+    private static final String TAG_NAME_DUPLICATED_CODE = "TAG_NAME_DUPLICATED";
 
     private final TagMapper tagMapper;
 
@@ -38,6 +43,23 @@ public class TagRepositoryImpl implements TagRepository {
             return List.of();
         }
         return tagMapper.selectByIds(ids);
+    }
+
+    @Override
+    public Optional<Tag> findById(long tagId) {
+        return Optional.ofNullable(tagMapper.selectById(tagId));
+    }
+
+    @Override
+    public Optional<Tag> findByName(String name) {
+        return Optional.ofNullable(tagMapper.selectByName(name));
+    }
+
+    @Override
+    public List<TagWithSkillCount> suggest(String keyword, TagKind kindFilter, int limit) {
+        return tagMapper.selectSuggestions(keyword, kindFilter, limit).stream()
+                .map(TagRepositoryImpl::toDomain)
+                .toList();
     }
 
     @Override
@@ -62,9 +84,83 @@ public class TagRepositoryImpl implements TagRepository {
         }
     }
 
+    /**
+     * 与 {@link #findOrCreateFreeTag} 相反:撞名直接 409。ADMIN 显式建一个词条,静默返回一个早就存在的同名
+     * 词条会让他以为自己刚设的 description 与 sortOrder 生效了,而实际上一个字都没写进去。
+     */
+    @Override
+    public Tag create(TagName name, TagKind kind, String description, int sortOrder, long createdByUserId) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("name", name.value());
+        params.put("kind", kind);
+        params.put("description", description);
+        params.put("sortOrder", sortOrder);
+        params.put("createdByUserId", createdByUserId);
+        try {
+            tagMapper.insertTag(params);
+        } catch (DuplicateKeyException ignored) {
+            throw nameConflict(name.value());
+        }
+        Long generatedId = (Long) params.get("id");
+        return new Tag(generatedId, name.value(), kind, description, sortOrder, createdByUserId, null, null);
+    }
+
+    @Override
+    public void update(long tagId, TagName name, TagKind kind, String description, int sortOrder) {
+        try {
+            tagMapper.updateTag(tagId, name.value(), kind, description, sortOrder);
+        } catch (DuplicateKeyException ignored) {
+            throw nameConflict(name.value());
+        }
+    }
+
+    @Override
+    public long countReferences(long tagId) {
+        return tagMapper.countReferences(tagId);
+    }
+
+    @Override
+    public List<String> findSkillNamesReferencing(long tagId, int sampleLimit) {
+        return tagMapper.selectSkillNamesReferencing(tagId, sampleLimit);
+    }
+
+    @Override
+    public List<String> findSkillNamesAtCuratedLimit(long tagId, int curatedLimit, int sampleLimit) {
+        return tagMapper.selectSkillNamesAtCuratedLimit(tagId, curatedLimit, sampleLimit);
+    }
+
+    @Override
+    public void migrateReferences(long fromTagId, long toTagId) {
+        tagMapper.insertMigratedReferences(fromTagId, toTagId);
+        tagMapper.deleteReferences(fromTagId);
+    }
+
+    @Override
+    public void deleteReferences(long tagId) {
+        tagMapper.deleteReferences(tagId);
+    }
+
+    @Override
+    public void deleteTag(long tagId) {
+        tagMapper.deleteTag(tagId);
+    }
+
     @Override
     public void deleteFreeTagIfOrphaned(long tagId) {
         tagMapper.deleteFreeTagIfOrphaned(tagId);
+    }
+
+    /**
+     * {@code uk_tag_name} 是最终防线。application 层已经先查过一次重名,但那是"先查后写",两次之间另一个
+     * ADMIN 完全可能插进来——所以这里必须再接一道,不能假设前面查过就不会撞。
+     *
+     * <p>不串 {@code DuplicateKeyException} 的 cause:这是一条 409,{@code GlobalExceptionHandler} 按 4xx
+     * 走 WARN 且不打栈(backend/CLAUDE.md 6.2),串上去的栈没有任何人会看到,而"已存在同名词条, name=xxx"
+     * 本身已经把发生了什么说完了。
+     */
+    private static ResourceConflictException nameConflict(String name) {
+        return new ResourceConflictException(
+                TAG_NAME_DUPLICATED_CODE, "已存在同名词条, name=" + name, Map.of("name", name));
     }
 
     private static TagWithSkillCount toDomain(TagRow row) {

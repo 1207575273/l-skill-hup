@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <!--
-  tag 只读查询。单一事实源:docs/20260802224934_业务建模与接口契约.md 6.2("GET /tags 词条列表,kind 可筛,
-  附带各词条下的 skill 数(GROUP BY 实时算)")。
+  tag 的查询与治理写入。单一事实源:docs/20260802224934_业务建模与接口契约.md 5.7(标签规则)与 6.2(接口清单)。
 
   skill_count 的 count(s.id) 而不是 count(st.skill_id):两次 LEFT JOIN 串联时,
   st(skill_tag)与 s(skill,且限定 status='PUBLISHED')是分开的两次 LEFT JOIN——
@@ -10,19 +9,26 @@
   只有第二跳"且 status=PUBLISHED"的条件不满足,此时 s.* 全部为 NULL 但 st.skill_id 依然非空。
   数的是 count(s.id) 才能正确地只统计"当前在列表里可见"的 skill 数,否则计数会包含用户点进去却发现列表里
   根本找不到的下架 skill,是自相矛盾的展示。
+
+  但治理侧的 countReferences 恰恰相反,数的是**全部**引用(含下架),理由见 TagRepository#countReferences:
+  删除不可逆,按可见数判断会把挂在下架 skill 上的标签静默剥掉。两个计数口径不同是有意的,不要"统一"掉。
 -->
 <mapper namespace="com.landray.skillhub.infrastructure.persistence.mapper.TagMapper">
 
+    <sql id="tagColumns">
+        t.id                    AS id,
+        t.name                  AS name,
+        t.kind                  AS kind,
+        t.description           AS description,
+        t.sort_order            AS sort_order,
+        t.created_by_user_id    AS created_by_user_id,
+        t.created_at            AS created_at,
+        t.updated_at            AS updated_at
+    </sql>
+
     <select id="selectAll" resultType="com.landray.skillhub.infrastructure.persistence.po.TagRow">
         SELECT
-            t.id                    AS id,
-            t.name                  AS name,
-            t.kind                  AS kind,
-            t.description           AS description,
-            t.sort_order            AS sort_order,
-            t.created_by_user_id    AS created_by_user_id,
-            t.created_at            AS created_at,
-            t.updated_at            AS updated_at,
+            <include refid="tagColumns" />,
             count(s.id)             AS skill_count
         FROM tag t
         LEFT JOIN skill_tag st ON st.tag_id = t.id
@@ -34,6 +40,32 @@
         </where>
         GROUP BY t.id
         ORDER BY t.kind, t.sort_order, t.name
+    </select>
+
+    <!--
+      联想列表按"引用多的在前"排,而不是按 sort_order:sort_order 是 ADMIN 给导航排的序,与"用户最可能想打
+      哪个标签"无关。引用数相同再按名称,保证同一次输入的结果稳定不跳动。
+
+      skill_count 与 selectAll 用同一个口径(只数 PUBLISHED),不因为"联想更该看真实热度"就换成全量计数——
+      同一个 DTO 字段在两个接口里表示两件事,是最容易被下游误读的那种不一致。
+
+      用 lower(t.name) LIKE lower(...) 而不是 ILIKE:两者在 PostgreSQL 上等价,但 lower() 的写法在别的库上
+      也成立,而这条 SQL 没有任何非用不可的 PG 特性。
+    -->
+    <select id="selectSuggestions" resultType="com.landray.skillhub.infrastructure.persistence.po.TagRow">
+        SELECT
+            <include refid="tagColumns" />,
+            count(s.id)             AS skill_count
+        FROM tag t
+        LEFT JOIN skill_tag st ON st.tag_id = t.id
+        LEFT JOIN skill s ON s.id = st.skill_id AND s.status = 'PUBLISHED'
+        WHERE lower(t.name) LIKE '%' || lower(#{keyword}) || '%'
+        <if test="kind != null">
+            AND t.kind = #{kind}
+        </if>
+        GROUP BY t.id
+        ORDER BY count(s.id) DESC, t.name
+        LIMIT #{limit}
     </select>
 
     <select id="selectByIds" resultType="com.landray.skillhub.domain.model.Tag">
@@ -51,11 +83,86 @@
         WHERE name = #{name}
     </select>
 
-    <!-- kind 恒为 FREE:CURATED 词条只能由 ADMIN 通过 P1 的标签治理接口创建,不会走这条自动创建路径。 -->
+    <select id="selectById" resultType="com.landray.skillhub.domain.model.Tag">
+        SELECT id, name, kind, description, sort_order, created_by_user_id, created_at, updated_at
+        FROM tag
+        WHERE id = #{tagId}
+    </select>
+
+    <!-- kind 恒为 FREE:CURATED 词条只能由 ADMIN 通过治理接口创建,不会走这条自动创建路径。 -->
     <insert id="insertFree" useGeneratedKeys="true" keyProperty="id" keyColumn="id" parameterType="map">
         INSERT INTO tag (name, kind, created_by_user_id)
         VALUES (#{name}, 'FREE', #{createdByUserId})
     </insert>
+
+    <insert id="insertTag" useGeneratedKeys="true" keyProperty="id" keyColumn="id" parameterType="map">
+        INSERT INTO tag (name, kind, description, sort_order, created_by_user_id)
+        VALUES (#{name}, #{kind}, #{description}, #{sortOrder}, #{createdByUserId})
+    </insert>
+
+    <update id="updateTag">
+        UPDATE tag
+        SET name        = #{name},
+            kind        = #{kind},
+            description = #{description},
+            sort_order  = #{sortOrder}
+        WHERE id = #{tagId}
+    </update>
+
+    <select id="countReferences" resultType="long">
+        SELECT count(*) FROM skill_tag WHERE tag_id = #{tagId}
+    </select>
+
+    <select id="selectSkillNamesReferencing" resultType="string">
+        SELECT s.name
+        FROM skill_tag st
+        JOIN skill s ON s.id = st.skill_id
+        WHERE st.tag_id = #{tagId}
+        ORDER BY s.name
+        LIMIT #{limit}
+    </select>
+
+    <!--
+      FREE -> CURATED 转换的拦截依据(文档 5.7)。数的是"这个 skill 现在挂了几个 CURATED",>= 上限的那些
+      一旦让本词条也变成 CURATED 就会溢出。
+
+      本词条此刻是 FREE,所以它自己不在内层的 count 里,不存在把自己数进去的偏差。
+    -->
+    <select id="selectSkillNamesAtCuratedLimit" resultType="string">
+        SELECT s.name
+        FROM skill_tag st
+        JOIN skill s ON s.id = st.skill_id
+        WHERE st.tag_id = #{tagId}
+          AND (
+              SELECT count(*)
+              FROM skill_tag inner_st
+              JOIN tag inner_t ON inner_t.id = inner_st.tag_id
+              WHERE inner_st.skill_id = st.skill_id
+                AND inner_t.kind = 'CURATED'
+          ) &gt;= #{curatedLimit}
+        ORDER BY s.name
+        LIMIT #{limit}
+    </select>
+
+    <!-- 插新行:已经挂着目标词条的 skill 跳过,否则撞 uk_skill_tag。配合下面的 deleteReferences 构成"删旧插新"。 -->
+    <insert id="insertMigratedReferences">
+        INSERT INTO skill_tag (skill_id, tag_id)
+        SELECT st.skill_id, #{toTagId}
+        FROM skill_tag st
+        WHERE st.tag_id = #{fromTagId}
+          AND NOT EXISTS (
+              SELECT 1 FROM skill_tag existing
+              WHERE existing.skill_id = st.skill_id AND existing.tag_id = #{toTagId}
+          )
+    </insert>
+
+    <delete id="deleteReferences">
+        DELETE FROM skill_tag WHERE tag_id = #{tagId}
+    </delete>
+
+    <delete id="deleteTag">
+        DELETE FROM tag WHERE id = #{tagId}
+    </delete>
 
     <delete id="deleteFreeTagIfOrphaned">
         DELETE FROM tag

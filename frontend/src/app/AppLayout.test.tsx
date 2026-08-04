@@ -115,4 +115,34 @@ describe('AppLayout', () => {
 
     await waitFor(() => expect(authApi.logout).toHaveBeenCalled())
   })
+
+  /** 挂一个点了只会看到"需要管理员权限"的入口,不如不挂——与"管理"入口对未登录者的处理同一条判据。 */
+  it('should_hide_tag_nav_entry_when_logged_in_as_normal_user', async () => {
+    setAuthToken('tok-123')
+    vi.mocked(authApi.fetchCurrentUser).mockResolvedValue(CURRENT_USER)
+
+    renderLayout()
+
+    expect(await screen.findByRole('link', { name: '管理' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '标签' })).not.toBeInTheDocument()
+  })
+
+  it('should_show_tag_nav_entry_when_logged_in_as_admin', async () => {
+    setAuthToken('tok-123')
+    vi.mocked(authApi.fetchCurrentUser).mockResolvedValue({ ...CURRENT_USER, role: 'ADMIN' })
+
+    renderLayout()
+
+    expect(await screen.findByRole('link', { name: '标签' })).toHaveAttribute(
+      'href',
+      '/manage/tags',
+    )
+  })
+
+  it('should_hide_both_manage_entries_when_not_authenticated', () => {
+    renderLayout()
+
+    expect(screen.queryByRole('link', { name: '管理' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '标签' })).not.toBeInTheDocument()
+  })
 })

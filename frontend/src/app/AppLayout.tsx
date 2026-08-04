@@ -47,9 +47,20 @@ function ManageNavLink() {
     return null
   }
   return (
-    <NavLink to="/manage" className={navLinkClassName}>
-      管理
-    </NavLink>
+    <>
+      {/* end 是必须的:没有它,`/manage/tags` 会让"管理"和"标签"两个入口同时高亮,
+          因为 NavLink 默认按前缀匹配 active。 */}
+      <NavLink to="/manage" end className={navLinkClassName}>
+        管理
+      </NavLink>
+      {/* 标签治理只给 ADMIN 看。普通用户点进去只会看到一句"需要管理员权限",
+          挂着入口等于提供一个点了就碰壁的按钮 —— 与"管理"入口对未登录者的处理同一条判据。 */}
+      {currentUserQuery.data.role === 'ADMIN' && (
+        <NavLink to="/manage/tags" className={navLinkClassName}>
+          标签
+        </NavLink>
+      )}
+    </>
   )
 }
 
