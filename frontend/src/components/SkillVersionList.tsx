@@ -2,10 +2,13 @@ import type { SkillVersionSummary } from '../api/types'
 import { Button } from './Button'
 import { CertificationBadge } from './CertificationBadge'
 import { cx } from './classNames'
+import { DownloadSkillButton } from './DownloadSkillButton'
 import { formatFileSize } from './skillDetailFormat'
 import { formatDateOnly } from './textFormat'
 
 export interface SkillVersionListProps {
+  /** 下载链接要按 skillId + 版本号拼,所以这个组件必须知道自己属于哪个 skill。 */
+  readonly skillId: number
   readonly versions: readonly SkillVersionSummary[]
   /** 当前用于"快速接入"的版本 id;默认是最新版本,用户可以选中历史版本改用它。 */
   readonly selectedVersionId: number | null
@@ -27,6 +30,7 @@ export interface SkillVersionListProps {
  * 从而让"选中历史版本时也能对该版本生成安装单"成立。
  */
 export function SkillVersionList({
+  skillId,
   versions,
   selectedVersionId,
   onSelectVersion,
@@ -67,6 +71,18 @@ export function SkillVersionList({
               />
             </div>
             <div className="flex items-center gap-2">
+              {/*
+                每一行都给下载入口:这里"下的是哪个版本"没有任何歧义,而页面顶部那个按钮
+                依赖"当前选中"这个隐含状态。对不熟悉的人来说,看着 1.0.2 那一行点下载,
+                拿到的就该是 1.0.2。
+              */}
+              <DownloadSkillButton
+                skillId={skillId}
+                version={version.version}
+                variant="ghost"
+                size="sm"
+                label="下载"
+              />
               {onCertifyVersion && (
                 <Button
                   variant="ghost"

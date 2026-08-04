@@ -23,6 +23,7 @@ describe('SkillVersionList', () => {
   it('should_render_version_size_and_date_when_rendered', () => {
     render(
       <SkillVersionList
+        skillId={42}
         versions={[buildVersion()]}
         selectedVersionId={null}
         onSelectVersion={vi.fn()}
@@ -38,6 +39,7 @@ describe('SkillVersionList', () => {
   it('should_mark_selected_version_and_disable_its_button_when_selected', () => {
     render(
       <SkillVersionList
+        skillId={42}
         versions={[buildVersion({ id: 10 })]}
         selectedVersionId={10}
         onSelectVersion={vi.fn()}
@@ -52,6 +54,7 @@ describe('SkillVersionList', () => {
     const handleSelect = vi.fn()
     render(
       <SkillVersionList
+        skillId={42}
         versions={[buildVersion({ id: 10 }), buildVersion({ id: 11, version: '2.0.0' })]}
         selectedVersionId={10}
         onSelectVersion={handleSelect}
@@ -66,6 +69,7 @@ describe('SkillVersionList', () => {
   it('should_show_certification_badge_when_version_revoked', () => {
     render(
       <SkillVersionList
+        skillId={42}
         versions={[buildVersion({ certification: 'REVOKED', certifyNote: '含未脱敏内网地址' })]}
         selectedVersionId={null}
         onSelectVersion={vi.fn()}
@@ -83,6 +87,7 @@ describe('SkillVersionList', () => {
   it('should_hide_certify_button_when_no_callback_given', () => {
     render(
       <SkillVersionList
+        skillId={42}
         versions={[buildVersion()]}
         selectedVersionId={null}
         onSelectVersion={vi.fn()}
@@ -97,6 +102,7 @@ describe('SkillVersionList', () => {
     const target = buildVersion()
     render(
       <SkillVersionList
+        skillId={42}
         versions={[target]}
         selectedVersionId={null}
         onSelectVersion={vi.fn()}
@@ -109,11 +115,54 @@ describe('SkillVersionList', () => {
     expect(onCertifyVersion).toHaveBeenCalledWith(target)
   })
 
+  /**
+   * 每一行都要有自己的下载入口,且**下的是本行的版本**。页面顶部那个按钮依赖"当前选中"这个隐含状态,
+   * 而这里没有歧义 —— 看着 1.0.2 那一行点下载,拿到的就该是 1.0.2。
+   */
+  it('should_render_per_row_download_link_pointing_at_that_row_version', () => {
+    render(
+      <SkillVersionList
+        skillId={42}
+        versions={[
+          buildVersion({ id: 1, version: '1.0.0' }),
+          buildVersion({ id: 2, version: '2.0.0' }),
+        ]}
+        selectedVersionId={1}
+        onSelectVersion={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('link', { name: '下载 1.0.0 版本的 zip' })).toHaveAttribute(
+      'href',
+      expect.stringContaining('/skills/42/versions/1.0.0/download'),
+    )
+    expect(screen.getByRole('link', { name: '下载 2.0.0 版本的 zip' })).toHaveAttribute(
+      'href',
+      expect.stringContaining('/skills/42/versions/2.0.0/download'),
+    )
+  })
+
+  /** 下载匿名可用(权限矩阵 5.16),不该跟着认证入口一起隐藏。 */
+  it('should_show_download_even_without_certify_callback', () => {
+    render(
+      <SkillVersionList
+        skillId={42}
+        versions={[buildVersion()]}
+        selectedVersionId={null}
+        onSelectVersion={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('link', { name: /下载/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /认证版本/ })).not.toBeInTheDocument()
+  })
+
   /** 认证按钮不该顺带把这一行选中 —— 那会悄悄改掉"快速接入"用的是哪个版本。 */
   it('should_not_select_version_when_certify_clicked', () => {
     const onSelectVersion = vi.fn()
     render(
       <SkillVersionList
+        skillId={42}
         versions={[buildVersion()]}
         selectedVersionId={null}
         onSelectVersion={onSelectVersion}

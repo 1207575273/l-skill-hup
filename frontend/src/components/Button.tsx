@@ -33,6 +33,31 @@ const SIZE_CLASSES: Record<ButtonSize, string> = {
 }
 
 /**
+ * 按钮外观的类名,单独导出给<b>必须是 {@code <a>} 而不能是 {@code <button>}</b> 的场景用。
+ *
+ * <p>典型例子是下载:浏览器原生的 `<a href download>` 会直接触发保存,而 `<button>` 做不到这件事
+ * ——用 JS 模拟要么 fetch 完再造一个临时 a 标签点一下(多绕一圈,还丢了断点续传与浏览器下载管理器),
+ * 要么 `location.assign` 把当前页面导航走。既然语义上它就是一个链接,那就用链接,只是长得像按钮。
+ *
+ * <p>把类名抽出来而不是给 Button 加一个 `as` prop:多态组件的类型体操(`as="a"` 时才允许 `href`)
+ * 收益很小,而这里只有"长得一样"这一个诉求。
+ */
+export function buttonClassName(options?: {
+  readonly variant?: ButtonVariant
+  readonly size?: ButtonSize
+  readonly fullWidth?: boolean
+}): string {
+  return cx(
+    'inline-flex items-center justify-center rounded-control font-medium transition-colors',
+    'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600',
+    'disabled:cursor-not-allowed',
+    VARIANT_CLASSES[options?.variant ?? 'primary'],
+    SIZE_CLASSES[options?.size ?? 'md'],
+    options?.fullWidth === true && 'w-full',
+  )
+}
+
+/**
  * 基础按钮,四个语义变体覆盖本轮已知场景:primary(主操作,如"快速接入")、
  * secondary(次操作,如"查看详情"、Modal 里的"取消")、ghost(低调操作)、
  * danger(破坏性操作,如未来的下架/撤销认证)。
@@ -57,14 +82,7 @@ export function Button({
       {...rest}
       type={type}
       disabled={disabled || loading}
-      className={cx(
-        'inline-flex items-center justify-center rounded-control font-medium transition-colors',
-        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600',
-        'disabled:cursor-not-allowed',
-        VARIANT_CLASSES[variant],
-        SIZE_CLASSES[size],
-        fullWidth && 'w-full',
-      )}
+      className={buttonClassName({ variant, size, fullWidth })}
     >
       {loading ? <Spinner size="sm" label="处理中" /> : iconLeft}
       {children}

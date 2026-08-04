@@ -7,6 +7,7 @@ import { Button } from '../components/Button'
 import { CertificationBadge } from '../components/CertificationBadge'
 import { CertifyVersionDialog } from '../components/CertifyVersionDialog'
 import { cx } from '../components/classNames'
+import { DownloadSkillButton } from '../components/DownloadSkillButton'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Modal } from '../components/Modal'
@@ -110,6 +111,9 @@ export default function SkillDetailPage() {
   const latestVersion = skill.latestVersion
   const effectiveVersionId = selectedVersionId ?? latestVersion?.id ?? null
   const versions = versionsQuery.data ?? []
+  // 下载接口按**版本号**定位(与安装脚本、认证接口一致),而选中态存的是 versionId,
+  // 所以这里要回查一次。版本列表还没加载完时回落到最新版 —— 详情响应里自带它的版本号。
+  const selectedVersion = versions.find((item) => item.id === effectiveVersionId)
   // 按 skillId 判断即可:购物车对同一个 skill 只保留一项(store 的 addItem 就是按 skillId 去重的),
   // 换版本不会变成两项。
   const inInstallCart = cartItems.some((item) => item.skillId === skill.id)
@@ -203,6 +207,19 @@ export default function SkillDetailPage() {
             >
               {inInstallCart ? '已加入安装单' : '加入安装单'}
             </Button>
+            {/*
+              直接下载 zip。"快速接入"要先选客户端、再选全局还是项目级,再把命令粘进终端 ——
+              每一步都假定使用者知道自己在干什么。下载一个 zip 是零概念的动作,谁都会,
+              先让完全不懂的人能把东西拿到手。
+
+              下的是**当前选中的版本**,与上面"加入安装单"同一条判据:用户特意翻到 1.0.3
+              再点下载,给他最新版是最难察觉的一类错。
+            */}
+            <DownloadSkillButton
+              skillId={skill.id}
+              version={selectedVersion?.version ?? latestVersion.version}
+              size="sm"
+            />
           </div>
         )}
       </header>
@@ -282,6 +299,7 @@ export default function SkillDetailPage() {
           <EmptyState title="暂无版本" />
         ) : (
           <SkillVersionList
+            skillId={skill.id}
             versions={versions}
             selectedVersionId={effectiveVersionId}
             onSelectVersion={setSelectedVersionId}

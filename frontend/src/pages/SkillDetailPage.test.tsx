@@ -130,6 +130,13 @@ describe('SkillDetailPage', () => {
       bashCommand: 'curl -fsSL http://x/skillhub/i/bundle-token.sh | bash',
     })
     vi.mocked(authApi.fetchCurrentUser).mockResolvedValue(buildCurrentUser())
+    // buildSkillDownloadUrl 是纯 URL 拼装,但它和请求函数住在同一个模块里,被 vi.mock 一并自动 mock 掉了,
+    // 默认返回 undefined —— 而 <a> 没有 href 就没有 link 角色,页面上所有下载入口在测试里会"存在但查不到"。
+    // 给它一个真实形状的实现,让 DOM 与线上一致。
+    vi.mocked(skillsApi.buildSkillDownloadUrl).mockImplementation(
+      (skillId, version) =>
+        `/skillhub/api/v1/skills/${skillId}/versions/${encodeURIComponent(version)}/download`,
+    )
   })
 
   afterEach(() => {
@@ -385,6 +392,34 @@ describe('SkillDetailPage', () => {
     vi.mocked(skillsApi.fetchSkillDetail).mockResolvedValue(buildSkill())
     vi.mocked(skillsApi.fetchSkillVersions).mockResolvedValue([buildVersionSummary()])
   }
+
+  /**
+   * 顶部的下载按钮必须跟着"当前选中的版本"走,与"加入安装单"同一条判据:用户特意翻到历史版本
+   * 再点下载,给他最新版是最难察觉的一类错 —— 下下来的包看着没问题,装进去才发现不是那一版。
+   */
+  it('should_point_top_download_at_selected_version_not_latest', async () => {
+    vi.mocked(skillsApi.fetchSkillDetail).mockResolvedValue(buildSkill())
+    vi.mocked(skillsApi.fetchSkillVersions).mockResolvedValue([
+      buildVersionSummary({ id: 20, version: '1.2.0' }),
+      buildVersionSummary({ id: 11, version: '1.0.0' }),
+    ])
+
+    renderPage()
+    await screen.findByRole('list', { name: '版本列表' })
+
+    // 每个版本在列表里各有一行下载;顶部还有一个跟着"当前选中"走。
+    // 默认选中最新版 1.2.0,所以 1.2.0 有两个(顶部 + 行),1.0.0 只有一个(行)。
+    expect(screen.getAllByRole('link', { name: '下载 1.2.0 版本的 zip' })).toHaveLength(2)
+    expect(screen.getAllByRole('link', { name: '下载 1.0.0 版本的 zip' })).toHaveLength(1)
+
+    // 翻到历史版本后,顶部那个必须跟过去 —— 两边数量对调
+    fireEvent.click(screen.getByLabelText('选择版本 1.0.0'))
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('link', { name: '下载 1.0.0 版本的 zip' })).toHaveLength(2)
+    })
+    expect(screen.getAllByRole('link', { name: '下载 1.2.0 版本的 zip' })).toHaveLength(1)
+  })
 
   it('should_hide_certify_entry_when_viewer_is_normal_user', async () => {
     stubDetailAndVersions()
