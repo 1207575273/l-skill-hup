@@ -127,6 +127,24 @@ services:
       ARTIFACT_ROOT: /app/data/artifacts
       LOG_ROOT: /app/logs
       APP_VERSION: ${APP_VERSION:-0.1.0}
+      # ------------------------------------------------------
+      # prod 独有的三个必填项。**刻意不写 `:-默认值`**
+      #
+      # 漏配时 compose 传空串,应用在启动最早期就响亮地失败:
+      #   BOOTSTRAP_ADMIN_PASSWORD  -> BootstrapAdminEnvironmentValidator 直接拒绝启动
+      #   INSTALL_PUBLIC_BASE_URL   -> 占位符解析不出来,启动失败
+      # 给了默认值就变成"忘了配也能起来,起来了却是错的" —— 一个带公开默认密码的 ADMIN
+      # 比没有管理员更危险,而一个指向 localhost 的安装地址会让所有人拿到装不上的命令。
+      #
+      # app-dev 不需要这三行:dev 档在 application-dev.yml 里给了默认值,本机开箱即用。
+      # 两个环境的配置刻意全量重复、独立演进(根 CLAUDE.md 10.0),这里就是那条规矩的体现。
+      # ------------------------------------------------------
+      BOOTSTRAP_ADMIN_LOGIN: ${BOOTSTRAP_ADMIN_LOGIN:-admin}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
+      INSTALL_PUBLIC_BASE_URL: ${INSTALL_PUBLIC_BASE_URL}
+      # 内网谁都能访问页面,开着等于任何人都能注册并上传会被 Agent 执行的内容。
+      # 要开必须是一个有人负责的决定,不是默认就敞着(application-prod.yml 里有完整理由)。
+      LOCAL_REGISTER_ENABLED: ${LOCAL_REGISTER_ENABLED:-false}
       JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs}
     ports:
       - "${APP_PORT:-18080}:18080"
