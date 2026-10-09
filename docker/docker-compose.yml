@@ -91,9 +91,20 @@ services:
       DB_NAME: ${DB_NAME:-skillhub}
       DB_USER: ${DB_USER:-skillhub}
       DB_PASSWORD: ${DB_PASSWORD:-skillhub}
+      # 切 OSS 后 ARTIFACT_ROOT 只剩回退用途:application-*.yml 里把 storage.type 改回 local
+      # 就能回到切换前的状态,所以这一行与下面的 artifact 卷都保留着,不要顺手删。
       ARTIFACT_ROOT: /app/data/artifacts
       LOG_ROOT: /app/logs
       APP_VERSION: ${APP_VERSION:-0.1.0}
+      # 对象存储凭证。**dev 与 prod 都必填** —— 两档的 application-*.yml 现在都是
+      # skillhub.storage.type: s3,制品落阿里云 OSS,靠 key-prefix(skillhub-dev/ 与 skillhub-prod/)
+      # 在同一个桶里分治。
+      #
+      # 与下面 prod 那三项同一个道理:**刻意不写 `:-默认值`**。漏配时 compose 传空串,
+      # S3ArtifactStorage 在构造期就报"skillhub.storage.s3.access-key 必填,当前为空"并拒绝启动。
+      # 给默认值等于"忘了配也能起来,起来了却连不上存储",而那个错要等第一个人上传 skill 才暴露。
+      OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID}
+      OSS_SECRET_ACCESS_KEY: ${OSS_SECRET_ACCESS_KEY}
       JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs}
     ports:
       # 与 app-prod 同端口:两档是互斥的,不该同时起。
@@ -124,9 +135,19 @@ services:
       DB_NAME: ${DB_NAME:-skillhub}
       DB_USER: ${DB_USER:-skillhub}
       DB_PASSWORD: ${DB_PASSWORD:-skillhub}
+      # 切 OSS 后只剩回退用途,同 app-dev 的说明。
       ARTIFACT_ROOT: /app/data/artifacts
       LOG_ROOT: /app/logs
       APP_VERSION: ${APP_VERSION:-0.1.0}
+      # 对象存储凭证。**dev 与 prod 都必填** —— 两档的 application-*.yml 现在都是
+      # skillhub.storage.type: s3,制品落阿里云 OSS,靠 key-prefix(skillhub-dev/ 与 skillhub-prod/)
+      # 在同一个桶里分治。
+      #
+      # 与下面 prod 那三项同一个道理:**刻意不写 `:-默认值`**。漏配时 compose 传空串,
+      # S3ArtifactStorage 在构造期就报"skillhub.storage.s3.access-key 必填,当前为空"并拒绝启动。
+      # 给默认值等于"忘了配也能起来,起来了却连不上存储",而那个错要等第一个人上传 skill 才暴露。
+      OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID}
+      OSS_SECRET_ACCESS_KEY: ${OSS_SECRET_ACCESS_KEY}
       # ------------------------------------------------------
       # prod 独有的三个必填项。**刻意不写 `:-默认值`**
       #

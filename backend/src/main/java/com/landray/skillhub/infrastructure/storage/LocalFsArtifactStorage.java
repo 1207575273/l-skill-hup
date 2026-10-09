@@ -9,6 +9,7 @@ import java.nio.file.StandardCopyOption;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import com.landray.skillhub.domain.storage.ArtifactStorage;
@@ -21,6 +22,10 @@ import com.landray.skillhub.shared.exception.ResourceNotFoundException;
  * 标准 API 的实现,业务代码一行不动。
  */
 @Component
+// 与 S3ArtifactStorage 的条件互斥(那边是 havingValue = "s3"),不会同时装配出两个 ArtifactStorage。
+// matchIfMissing = true:没显式选型时兜底到本地实现 —— 两者之中它是不需要外部凭证、不会把字节发到
+// 进程外的那一个,拿不准时落在这边最安全。
+@ConditionalOnProperty(name = "skillhub.storage.type", havingValue = "local", matchIfMissing = true)
 public class LocalFsArtifactStorage implements ArtifactStorage {
 
     private static final Logger log = LoggerFactory.getLogger(LocalFsArtifactStorage.class);
@@ -116,23 +121,15 @@ public class LocalFsArtifactStorage implements ArtifactStorage {
     /**
      * 把 key 解析成根目录下的真实路径,并挡住一切越界。
      *
+     * <p>字符级黑名单在 {@link ArtifactKeyGuard} 里,与 {@link S3ArtifactStorage} 共用同一份 —— 接口把这条
+     * 定成了对所有实现的硬要求,两份拷贝迟早会漂。
+     *
      * <p><b>不靠"key 是我们自己生成的"来省掉这一步。</b>校验后仍然用 {@code startsWith(root)} 兜底,是因为字符级
      * 的黑名单永远可能被某种编码绕过,而"解析完的绝对路径必须在根目录下"是个不依赖具体绕法的判定。这个项目分发的
      * 是会被 Agent 执行的内容,制品落盘是最后一道闸。
      */
     private Path resolve(String artifactKey) {
-        if (artifactKey == null || artifactKey.isBlank()) {
-            throw new IllegalArgumentException("artifactKey 不能为空");
-        }
-        if (artifactKey.contains("..")) {
-            throw new IllegalArgumentException("artifactKey 不许含相对路径片段, artifactKey=" + artifactKey);
-        }
-        if (artifactKey.startsWith("/") || artifactKey.startsWith("\\") || artifactKey.matches("^[A-Za-z]:.*")) {
-            throw new IllegalArgumentException("artifactKey 不许是绝对路径, artifactKey=" + artifactKey);
-        }
-        if (artifactKey.chars().anyMatch(Character::isISOControl)) {
-            throw new IllegalArgumentException("artifactKey 不许含控制字符");
-        }
+        ArtifactKeyGuard.requireSafe(artifactKey);
 
         Path resolved = root.resolve(artifactKey).normalize();
         if (!resolved.startsWith(root)) {

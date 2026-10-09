@@ -65,9 +65,33 @@ springdoc:
 
 skillhub:
   storage:
-    # P0 用本地文件夹实现 ArtifactStorage,业务代码只认接口
-    type: local
+    # 制品存储选型。dev 与 prod 都走 S3 兼容对象存储(阿里云 OSS),靠 s3.key-prefix 把两个环境隔开,
+    # 共用一个桶而互不可见。两边全量重复写一遍,不抽公共段(理由见 application.yml 顶部)。
+    #
+    # 想回到本地文件夹:把这里改回 local 即可。下面的 local-root 与 compose 里的 artifact 卷都保留着,
+    # 切换前的存量制品还在原处 —— 这是这次切换刻意留下的回退路径,不要顺手删掉。
+    type: s3
 
+    s3:
+      # 必须是带 s3. 前缀的 S3 兼容端点,不是控制台首页那个 oss-cn-* 域名。
+      # 也**不能**用 -internal 内网端点:那个只在同地域阿里云 ECS 内可解析,而本项目部署在公司内网机器上,
+      # 实测 DNS 能解析成 100.115.61.3 但连不通(超时),表现为上传一直挂住。
+      endpoint: https://s3.oss-cn-hongkong.aliyuncs.com
+      # OSS 的 S3 兼容层只认 aws-global。已对真桶实测:cn-hongkong / oss-cn-hongkong 都过不了签名校验。
+      region: aws-global
+      bucket: nodetimetop
+      # **前缀是硬要求不是可选项**:这个桶不被 skillhub 独占,桶根下还有 share/ 等别的用途,
+      # 不加前缀会和它们混在一起。dev 与 prod 的差异就只有这一行。
+      key-prefix: skillhub-dev/
+      # 凭证不写进 yml。给空默认值是为了让不碰存储的测试能照常启动(它们被 surefire 钉成 type: local);
+      # type: s3 时真缺失会在 S3ArtifactStorage 构造时报"必填,当前为空"并让启动失败,不会带着空 AK 跑。
+      access-key: ${OSS_ACCESS_KEY_ID:}
+      secret-key: ${OSS_SECRET_ACCESS_KEY:}
+      # 阿里云 OSS 走 virtual-hosted;MinIO 之类没配通配符 DNS 的实现才需要 true。
+      path-style-access: false
+
+    # 下面的 local-root 只在 type: local 时生效 —— 不是死配置:集成测试会把 type 覆盖回 local
+    # 并把这个值指到 @TempDir,DevPathConfigurationTest 也直接对它断言。
     # **默认值必须是绝对路径,不许再用 ./xxx。**
     #
     # 上一版写的是 `./data/artifacts`,相对路径按 JVM 的当前工作目录解析,于是同一份配置在三种启动方式下

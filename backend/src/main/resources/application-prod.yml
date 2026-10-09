@@ -68,7 +68,21 @@ springdoc:
 
 skillhub:
   storage:
-    type: local
+    # 与 dev 同构,只有 key-prefix 不同。回退路径见 dev 档同位置的说明。
+    type: s3
+
+    s3:
+      endpoint: https://s3.oss-cn-hongkong.aliyuncs.com
+      region: aws-global
+      bucket: nodetimetop
+      # 与 dev 的唯一差异。两个环境共用一个桶,靠这一行互不可见。
+      key-prefix: skillhub-prod/
+      access-key: ${OSS_ACCESS_KEY_ID:}
+      secret-key: ${OSS_SECRET_ACCESS_KEY:}
+      path-style-access: false
+
+    # 仅在 type: local 时生效,保留作回退路径:compose 里的 artifact 卷与 ARTIFACT_ROOT 都还在,
+    # 把上面的 type 改回 local 就能回到切 OSS 之前的状态(存量制品没被删)。
     local-root: ${ARTIFACT_ROOT}
 
   # 上传管线的解包上限(业务建模文档 5.2)。与 dev 全量重复,当前两边取值一致——
