@@ -1,4 +1,4 @@
-import type { SkillOwner, SkillTag } from '../api/types'
+import type { DeclaredOwner, SkillOwner, SkillTag } from '../api/types'
 
 /**
  * skill 详情页专用的纯函数格式化工具。**不改 `textFormat.ts` / `SkillCard.tsx`**——那是既有文件,
@@ -22,6 +22,30 @@ export function parseSkillIdParam(rawId: string | undefined): number | null {
  * 归属人展示,与展示约定 7.1"工号必须跟在展示名后面"一致。`owner` 为 `null` 时降级显示
  * "归属未知"而不是崩掉——库里 `owner_user_id` 是 NOT NULL,真出现只可能是数据异常。
  */
+/**
+ * 归属标签的统一出口:已认领显示真实归属人,未认领显示"未认领"并把自称归属标成"自称"。
+ *
+ * **自称归属刻意不套 `@` 前缀**。`@张三(80380486)` 这种形态在这个产品里一直意味着"有账号背书的人",
+ * 把一段谁都能填的自由文本渲染成同样的样子,等于在界面上伪造可信度 —— 而使用者正是靠这个判断要不要
+ * 安装一个会被 Agent 执行的包。
+ */
+export function formatSkillOwnershipLabel(
+  owner: SkillOwner | null,
+  declaredOwner: DeclaredOwner | null,
+  unclaimed: boolean,
+): string {
+  if (!unclaimed) {
+    return formatSkillOwnerLabel(owner)
+  }
+  if (declaredOwner === null) {
+    return '未认领'
+  }
+  const who = declaredOwner.employeeNo
+    ? `${declaredOwner.name}(${declaredOwner.employeeNo})`
+    : declaredOwner.name
+  return `未认领 · 自称 ${who}`
+}
+
 export function formatSkillOwnerLabel(owner: SkillOwner | null): string {
   if (owner === null) {
     return '@归属未知'

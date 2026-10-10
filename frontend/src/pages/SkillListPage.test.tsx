@@ -32,6 +32,8 @@ function buildSkill(overrides: Partial<SkillSummary> = {}): SkillSummary {
     favoriteCount: 1,
     updatedAt: '2026-07-20T08:00:00Z',
     owner: { userId: 1, displayName: '张三', employeeNo: 'E1024' },
+    declaredOwner: null,
+    unclaimed: false,
     tags: [],
     latestVersionId: 99,
     ...overrides,

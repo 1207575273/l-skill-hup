@@ -61,6 +61,8 @@ function buildSkill(overrides: Partial<SkillDetail> = {}): SkillDetail {
     createdAt: '2026-07-01T00:00:00Z',
     updatedAt: '2026-07-20T08:00:00Z',
     owner: { userId: 1, displayName: '张三', employeeNo: 'E1024' },
+    declaredOwner: null,
+    unclaimed: false,
     tags: [
       { id: 1, name: '代码审查', kind: 'CURATED', description: null, sortOrder: 1 },
       { id: 2, name: 'pdf', kind: 'FREE', description: null, sortOrder: 1 },
@@ -144,6 +146,66 @@ describe('SkillDetailPage', () => {
     vi.clearAllMocks()
   })
 
+  it('should_show_unclaimed_badge_and_declared_owner_when_unclaimed', async () => {
+    // 自称归属刻意不套 @ 前缀 —— @张三(工号) 这种形态一直意味着"有账号背书的人",
+    // 把一段谁都能填的自由文本渲染成同样的样子等于在界面上伪造可信度。
+    vi.mocked(skillsApi.fetchSkillDetail).mockResolvedValue(
+      buildSkill({
+        unclaimed: true,
+        owner: { userId: 1, displayName: 'system', employeeNo: null },
+        declaredOwner: { name: '张三', employeeNo: '80380486' },
+      }),
+    )
+    vi.mocked(skillsApi.fetchSkillVersions).mockResolvedValue([])
+
+    renderPage()
+
+    expect(await screen.findByText('未认领')).toBeInTheDocument()
+    expect(screen.getByText(/未认领 · 自称 张三\(80380486\)/)).toBeInTheDocument()
+  })
+
+  it('should_show_claim_button_when_unclaimed_and_logged_in', async () => {
+    vi.mocked(skillsApi.fetchSkillDetail).mockResolvedValue(
+      buildSkill({
+        unclaimed: true,
+        owner: { userId: 1, displayName: 'system', employeeNo: null },
+      }),
+    )
+    vi.mocked(skillsApi.fetchSkillVersions).mockResolvedValue([])
+    vi.mocked(skillsApi.claimSkill).mockResolvedValue(buildSkill({ unclaimed: false }))
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: '认领为我的' }))
+
+    await waitFor(() => expect(skillsApi.claimSkill).toHaveBeenCalledWith(42))
+  })
+
+  it('should_prompt_login_instead_of_claim_button_when_unclaimed_and_anonymous', async () => {
+    setAuthToken(null)
+    vi.mocked(skillsApi.fetchSkillDetail).mockResolvedValue(
+      buildSkill({
+        unclaimed: true,
+        owner: { userId: 1, displayName: 'system', employeeNo: null },
+      }),
+    )
+    vi.mocked(skillsApi.fetchSkillVersions).mockResolvedValue([])
+
+    renderPage()
+
+    expect(await screen.findByText('登录后可认领')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '认领为我的' })).not.toBeInTheDocument()
+  })
+
+  it('should_not_show_claim_affordance_when_already_claimed', async () => {
+    vi.mocked(skillsApi.fetchSkillDetail).mockResolvedValue(buildSkill({ unclaimed: false }))
+    vi.mocked(skillsApi.fetchSkillVersions).mockResolvedValue([])
+
+    renderPage()
+
+    await screen.findByText('代码审查助手')
+    expect(screen.queryByText('未认领')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '认领为我的' })).not.toBeInTheDocument()
+  })
   it('should_show_loading_spinner_when_skill_query_pending', () => {
     vi.mocked(skillsApi.fetchSkillDetail).mockReturnValue(new Promise(() => {}))
     vi.mocked(skillsApi.fetchSkillVersions).mockReturnValue(new Promise(() => {}))

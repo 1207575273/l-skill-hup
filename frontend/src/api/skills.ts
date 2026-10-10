@@ -122,9 +122,23 @@ export interface PublishSkillPayload {
   readonly source: SkillSource
   readonly curatedTagIds?: number[]
   readonly freeTagNames?: string[]
+  /**
+   * 自称的归属人姓名,**仅匿名上传时可填**。已登录还带它后端报 400(DECLARED_OWNER_NOT_ALLOWED)。
+   *
+   * 留空即不声明,此时这个 skill 处于无主状态,等人登录后认领。
+   */
+  readonly declaredOwnerName?: string
+  /** 自称的工号,可选。同名同姓在公司规模上是必然事件,只给姓名等于没给线索。 */
+  readonly declaredOwnerEmployeeNo?: string
 }
 
-/** `POST /skills`(需登录),发布新 skill(同时建首个版本)。 */
+/**
+ * `POST /skills`,发布新 skill(同时建首个版本)。**匿名可用**。
+ *
+ * 匿名发布的包归属落到内置 system、处于待认领状态;登录后由 `claimSkill` 认领。
+ * 匿名时不能带 freeTagNames(后端报 ANONYMOUS_FREE_TAG_NOT_ALLOWED):自由标签是全局词表,
+ * 不交给未经身份认定的请求。
+ */
 export function publishSkill(payload: PublishSkillPayload): Promise<SkillDetail> {
   const formData = new FormData()
   formData.append('file', payload.packageFile)
@@ -133,6 +147,18 @@ export function publishSkill(payload: PublishSkillPayload): Promise<SkillDetail>
     formData.append('displayName', payload.displayName)
   }
   formData.append('source', payload.source)
+  // 声明归属只在匿名上传时有意义;已登录还带它后端会报 400(归属人就是你本人)。
+  // 空字符串不发:后端用 DeclaredOwner.ofNullable 把空白归一成"没有声明",前端不必重复这个判断,
+  // 但也不该把一个空串当成"填了"发过去。
+  if (payload.declaredOwnerName !== undefined && payload.declaredOwnerName.trim() !== '') {
+    formData.append('declaredOwnerName', payload.declaredOwnerName.trim())
+  }
+  if (
+    payload.declaredOwnerEmployeeNo !== undefined &&
+    payload.declaredOwnerEmployeeNo.trim() !== ''
+  ) {
+    formData.append('declaredOwnerEmployeeNo', payload.declaredOwnerEmployeeNo.trim())
+  }
   for (const tagId of payload.curatedTagIds ?? []) {
     formData.append('curatedTagIds', String(tagId))
   }
@@ -140,6 +166,16 @@ export function publishSkill(payload: PublishSkillPayload): Promise<SkillDetail>
     formData.append('freeTagNames', tagName)
   }
   return apiPostFormData<SkillDetail>('/skills', formData)
+}
+
+/**
+ * `POST /skills/{id}/claim`(需登录),认领一个无主 skill。
+ *
+ * 先到先得:并发时后端由 SQL 的比较并交换仲裁,抢输的一方收到 409 SKILL_ALREADY_CLAIMED。
+ * 认领成功后归属落到当前登录人,此后发新版本 / 改元数据 / 下架 / 删除才轮得到你。
+ */
+export function claimSkill(skillId: number): Promise<SkillDetail> {
+  return apiPost<SkillDetail>(`/skills/${skillId}/claim`, undefined)
 }
 
 export interface PublishSkillVersionPayload {

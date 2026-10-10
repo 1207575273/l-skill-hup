@@ -8,6 +8,7 @@ import type {
 import {
   addSkillComment,
   certifySkillVersion,
+  claimSkill,
   deleteSkill,
   deleteSkillComment,
   precheckSkillPackage,
@@ -92,6 +93,26 @@ export function useUpdateSkillMetadata(skillId: number) {
  * 两处都要标是因为它们是两份独立缓存(`lists()` 与 `managedAll()`)。只标公开列表的话,
  * 在管理页点下架会看起来毫无反应 —— 而管理页恰恰是最常触发这个动作的地方。
  */
+/**
+ * `POST /skills/{id}/claim`,认领一个无主 skill。
+ *
+ * 成功后把详情缓存直接换成返回值(它已经带上新的归属与 `unclaimed: false`),并失效公开列表 ——
+ * 列表卡片上也显示归属,只换详情会让用户认领后回到列表发现那里还写着"未认领"。
+ *
+ * 失败最常见的是 409 SKILL_ALREADY_CLAIMED(被人抢先),调用方应当把错误展示出来并重新拉详情,
+ * 而不是静默忽略 —— 用户需要知道这个包现在归谁了。
+ */
+export function useClaimSkill(skillId: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => claimSkill(skillId),
+    onSuccess: (skill: SkillDetail) => {
+      queryClient.setQueryData(skillKeys.detail(skillId), skill)
+      queryClient.invalidateQueries({ queryKey: skillKeys.lists() })
+    },
+  })
+}
+
 export function useUnlistSkill(skillId: number) {
   const queryClient = useQueryClient()
   return useMutation({

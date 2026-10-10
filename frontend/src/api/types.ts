@@ -98,6 +98,20 @@ export interface SkillOwner {
   readonly employeeNo: string | null
 }
 
+/**
+ * 匿名上传时上传者**自称**的归属人,对应 `DeclaredOwnerResponse.java`。
+ *
+ * **没有 `userId`**,这不是漏了:它背后没有账号,给不出能查人的 id。这正是它与 {@link SkillOwner} 最实质的
+ * 差别 —— 后者的 `userId` 能用来判权限,这里的两格字符串不能用来判断任何事。
+ *
+ * 展示上必须与真实归属区分开(不要套 `@` 前缀,`@` 留给有账号背书的归属人),因为"这个包是谁的"是使用者
+ * 决定要不要安装的依据之一,而包里的内容会被 Agent 执行。见 `formatSkillOwnershipLabel`。
+ */
+export interface DeclaredOwner {
+  readonly name: string
+  readonly employeeNo: string | null
+}
+
 /** `GET /identities` 与 `GET /auth/me` 里的一条身份,对应 `IdentitySummaryResponse.java`。 */
 export interface IdentitySummary {
   readonly id: number
@@ -235,6 +249,14 @@ export interface SkillSummary {
   readonly favoriteCount: number
   readonly updatedAt: string
   readonly owner: SkillOwner | null
+  readonly declaredOwner: DeclaredOwner | null
+  /**
+   * 还没有真实归属人,可被认领。
+   *
+   * 由后端显式给出,而不是让前端判断 `owner.userId === 1` —— 那个 1 是内置 system 账号的 id,
+   * 属于服务端实现细节,泄漏到前端会让"无主"这个概念同时依赖两边对同一个魔法值的理解。
+   */
+  readonly unclaimed: boolean
   readonly tags: SkillTag[]
   /**
    * 最新版本的 id,没有任何版本时为 `null`。
@@ -390,6 +412,14 @@ export interface SkillDetail {
   readonly createdAt: string
   readonly updatedAt: string
   readonly owner: SkillOwner | null
+  readonly declaredOwner: DeclaredOwner | null
+  /**
+   * 还没有真实归属人,可被认领。
+   *
+   * 由后端显式给出,而不是让前端判断 `owner.userId === 1` —— 那个 1 是内置 system 账号的 id,
+   * 属于服务端实现细节,泄漏到前端会让"无主"这个概念同时依赖两边对同一个魔法值的理解。
+   */
+  readonly unclaimed: boolean
   readonly tags: SkillTag[]
   readonly latestVersion: SkillVersionDetail | null
 }

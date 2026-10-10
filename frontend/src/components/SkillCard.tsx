@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import type { SkillSummary } from '../api/types'
 import { pickAvatarColor } from './avatarColor'
 import { CertificationBadge } from './CertificationBadge'
+import { formatSkillOwnershipLabel } from './skillDetailFormat'
 import { TagChip } from './TagChip'
 import { formatDateOnly, truncateWithEllipsis } from './textFormat'
 
@@ -41,18 +42,6 @@ function sortTagsForDisplay(tags: SkillSummary['tags']): SkillSummary['tags'] {
     }
     return a.sortOrder - b.sortOrder
   })
-}
-
-/**
- * 归属人展示。`owner` 可能为 null —— 库里 `owner_user_id` 是 NOT NULL(系统内置的挂在 id=1 的 system
- * 账号上),所以 null 只可能是数据异常。**降级成"归属未知"而不是崩掉**:一条元数据缺失不该让整个列表白屏,
- * 而且这个文案本身就是异常的信号,比渲染出 `@undefined` 更容易被发现。
- */
-function formatOwnerLabel(owner: SkillSummary['owner']): string {
-  if (owner === null) {
-    return '@归属未知'
-  }
-  return owner.employeeNo ? `@${owner.displayName}(${owner.employeeNo})` : `@${owner.displayName}`
 }
 
 /**
@@ -138,7 +127,8 @@ export function SkillCard({
       */}
       <div className="mt-auto flex flex-col gap-2 border-t border-gray-100 pt-3 dark:border-gray-800">
         <p className="truncate text-xs text-gray-500 dark:text-gray-400">
-          {formatOwnerLabel(skill.owner)} · {formatDateOnly(skill.updatedAt)}
+          {formatSkillOwnershipLabel(skill.owner, skill.declaredOwner, skill.unclaimed)} ·{' '}
+          {formatDateOnly(skill.updatedAt)}
         </p>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {/*

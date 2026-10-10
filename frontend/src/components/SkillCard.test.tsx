@@ -18,6 +18,8 @@ function buildSkill(overrides: Partial<SkillSummary> = {}): SkillSummary {
     likeCount: 12,
     favoriteCount: 5,
     owner: { userId: 1, displayName: '张三', employeeNo: 'E1024' },
+    declaredOwner: null,
+    unclaimed: false,
     tags: [
       { id: 1, name: '效率工具', kind: 'CURATED', description: null, sortOrder: 1 },
       { id: 2, name: 'pdf', kind: 'FREE', description: null, sortOrder: 1 },

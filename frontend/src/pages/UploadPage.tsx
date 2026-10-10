@@ -10,7 +10,6 @@ import type {
 import { Button } from '../components/Button'
 import { CuratedTagPicker } from '../components/CuratedTagPicker'
 import { DuplicateNameDialog } from '../components/DuplicateNameDialog'
-import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { FreeTagInput } from '../components/FreeTagInput'
 import { PackageSourcePicker } from '../components/PackageSourcePicker'
@@ -68,6 +67,9 @@ interface PublishFormState {
   readonly source: SkillSource
   readonly curatedTagIds: number[]
   readonly freeTagsRaw: string
+  /** 仅匿名上传时有意义;已登录时归属人就是本人,这两格不展示也不发送。 */
+  readonly declaredOwnerName: string
+  readonly declaredOwnerEmployeeNo: string
 }
 
 interface PublishFormErrors {
@@ -115,6 +117,8 @@ const INITIAL_FORM_STATE: PublishFormState = {
   source: 'INTERNAL',
   curatedTagIds: [],
   freeTagsRaw: '',
+  declaredOwnerName: '',
+  declaredOwnerEmployeeNo: '',
 }
 
 /**
@@ -163,6 +167,12 @@ export default function UploadPage() {
   const navigate = useNavigate()
   const hasToken = getAuthToken() !== null
   const currentUserQuery = useCurrentUser()
+  // 上传已放开匿名(产品取舍:放低投稿门槛)。这里不再拦人,只分两种形态:
+  //   已登录 -> 归属人就是你,不展示"声明归属"
+  //   匿名   -> 包落到内置 system 名下待认领,可以自己填一个未经核实的声明归属
+  // token 存在但 /auth/me 失败(过期/失效)按匿名处理,不单独区分"两种没登录":对上传链路而言两者
+  // 行为完全一致,区分它们只会多一条没人走的分支。
+  const isAnonymous = !hasToken || currentUserQuery.isError
   const curatedTagsQuery = useTags('CURATED')
 
   const [localPackage, setLocalPackage] = useState<LocalPackageState>({ status: 'empty' })
@@ -218,7 +228,12 @@ export default function UploadPage() {
         displayName: form.displayName.trim() || undefined,
         source: form.source,
         curatedTagIds: form.curatedTagIds,
-        freeTagNames: parseFreeTags(form.freeTagsRaw),
+        // 匿名不能新建自由标签(后端报 ANONYMOUS_FREE_TAG_NOT_ALLOWED),干脆不发 ——
+        // 匿名时那个输入框本来也不展示,这里只是不依赖"界面没展示所以状态一定是空"这个假设。
+        freeTagNames: isAnonymous ? [] : parseFreeTags(form.freeTagsRaw),
+        // 已登录时带声明归属后端会报 400,所以只在匿名时发。
+        declaredOwnerName: isAnonymous ? form.declaredOwnerName : undefined,
+        declaredOwnerEmployeeNo: isAnonymous ? form.declaredOwnerEmployeeNo : undefined,
       })
       navigate(`/skills/${skill.id}`)
     } catch {
@@ -291,26 +306,8 @@ export default function UploadPage() {
     void publishAsNewVersion(localPackage.zipBlob)
   }
 
-  // 上传是登录才可用的动作(业务建模 5.16)。token 缺失时直接引导去登录;token 存在
-  // 但 /auth/me 失败(过期/失效)时按同样的方式处理,不单独区分"两种没登录"。
-  if (!hasToken || currentUserQuery.isError) {
-    return (
-      <EmptyState
-        title="上传 skill 需要先登录"
-        description="登录后即可发布新 skill,或给自己拥有的 skill 发新版本。"
-        action={
-          <Link
-            to="/login"
-            className="inline-flex h-10 items-center rounded-control bg-brand-600 px-4 text-sm font-medium text-white hover:bg-brand-700"
-          >
-            去登录
-          </Link>
-        }
-      />
-    )
-  }
-
-  if (currentUserQuery.isPending) {
+  // 只有"真的在等自己的账号信息"时才转圈。匿名访客没有账号可加载,让他们对着 spinner 等是纯粹的摩擦。
+  if (hasToken && !currentUserQuery.isError && currentUserQuery.isPending) {
     return <Spinner label="加载账号信息中" />
   }
 
@@ -320,6 +317,7 @@ export default function UploadPage() {
         <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">发布 skill</h1>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           选文件夹、拖入 zip 或上传单个 SKILL.md,三种方式效果一致,服务端只认 zip 一种入口。
+          {isAnonymous ? ' 未登录也能发布,包会处于"未认领"状态,登录后可认领为自己的。' : ''}
         </p>
       </div>
 
@@ -361,6 +359,33 @@ export default function UploadPage() {
               onChange={(value) => setForm((prev) => ({ ...prev, source: value }))}
               options={SOURCE_OPTIONS}
             />
+            {isAnonymous && (
+              <div className="flex flex-col gap-3 rounded-control border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/50 dark:bg-amber-900/20">
+                <p className="text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+                  你没有登录。这个 skill 会以未认领状态发布,任何人登录后都能认领它。下面填的归属
+                  <strong>不会被核实</strong>,只作为展示线索;要真正拥有它(发新版本、改信息、删除),
+                  发布后登录并认领。
+                </p>
+                <TextInput
+                  label="归属人姓名(可选)"
+                  maxLength={64}
+                  value={form.declaredOwnerName}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, declaredOwnerName: event.target.value }))
+                  }
+                  hint="留空则只显示未认领"
+                />
+                <TextInput
+                  label="归属人工号(可选)"
+                  maxLength={32}
+                  value={form.declaredOwnerEmployeeNo}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, declaredOwnerEmployeeNo: event.target.value }))
+                  }
+                  hint="同名同姓很常见,填了工号旁人才分得清是哪个张三"
+                />
+              </div>
+            )}
             <div className="flex flex-col gap-1">
               <CuratedTagPicker
                 tags={curatedTagsQuery.data ?? []}
@@ -377,12 +402,19 @@ export default function UploadPage() {
                 />
               )}
             </div>
-            <FreeTagInput
-              value={form.freeTagsRaw}
-              onChange={(next) => setForm((prev) => ({ ...prev, freeTagsRaw: next }))}
-              maxTags={MAX_FREE_TAGS}
-              errorMessage={formErrors.freeTags}
-            />
+            {isAnonymous ? (
+              <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                自由标签要登录后才能打:它是全局词表,新造的词会出现在所有人的筛选面板上,需要一个
+                可追溯的创建者,事后也由管理员治理。上面的分类标签匿名也能选。
+              </p>
+            ) : (
+              <FreeTagInput
+                value={form.freeTagsRaw}
+                onChange={(next) => setForm((prev) => ({ ...prev, freeTagsRaw: next }))}
+                maxTags={MAX_FREE_TAGS}
+                errorMessage={formErrors.freeTags}
+              />
+            )}
             <Button type="submit" loading={isSubmitting} fullWidth>
               发布
             </Button>

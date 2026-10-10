@@ -20,7 +20,7 @@ import { SkillMetadataEditForm } from '../components/SkillMetadataEditForm'
 import { SkillVersionList } from '../components/SkillVersionList'
 import { Spinner } from '../components/Spinner'
 import {
-  formatSkillOwnerLabel,
+  formatSkillOwnershipLabel,
   parseSkillIdParam,
   sortSkillTagsForDisplay,
 } from '../components/skillDetailFormat'
@@ -30,6 +30,7 @@ import { useCurrentUser } from '../hooks/useAuthQueries'
 import { useInstallCartStore } from '../hooks/useInstallCartStore'
 import {
   useCertifyVersion,
+  useClaimSkill,
   useRelistSkill,
   useUnlistSkill,
   useUpdateSkillMetadata,
@@ -59,6 +60,7 @@ export default function SkillDetailPage() {
 
   const unlistSkill = useUnlistSkill(skillId ?? 0)
   const relistSkill = useRelistSkill(skillId ?? 0)
+  const claimSkill = useClaimSkill(skillId ?? 0)
   const updateMetadata = useUpdateSkillMetadata(skillId ?? 0)
   const certifyVersion = useCertifyVersion(skillId ?? 0)
 
@@ -119,9 +121,14 @@ export default function SkillDetailPage() {
   const inInstallCart = cartItems.some((item) => item.skillId === skill.id)
 
   const currentUser = currentUserQuery.data
+  // 无主 skill 的归属人是内置 system,而 system 永远登不进来 —— 所以这条判断对无主 skill 自动
+  // 退化成"仅 ADMIN",不需要为它加分支。匿名上传的人要自己管理,先认领。
   const canManage = Boolean(
     currentUser && (currentUser.role === 'ADMIN' || currentUser.id === skill.owner?.userId),
   )
+  // 认领只要求"登录了":不看角色,也不校验声明归属是否对得上(先到先得,理由见后端
+  // SkillClaimApplicationService —— 本地建号普遍没绑工号,拿工号当门槛会导致谁都认领不了)。
+  const canClaim = skill.unclaimed && currentUser !== undefined
   // 认证是平台治理动作,**只看 ADMIN,不看 owner**(5.8):作者给自己发认证徽章会让整套机制当场归零。
   // 与 canManage 刻意分成两个变量 —— 合成一个"能管理"会让这条区别在某次改动里被顺手抹掉。
   const canCertify = currentUser?.role === 'ADMIN'
@@ -152,7 +159,8 @@ export default function SkillDetailPage() {
               </h1>
               <p className="font-mono text-sm text-gray-500 dark:text-gray-400">{skill.name}</p>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                {formatSkillOwnerLabel(skill.owner)} · 更新于 {formatDateOnly(skill.updatedAt)}
+                {formatSkillOwnershipLabel(skill.owner, skill.declaredOwner, skill.unclaimed)} ·
+                更新于 {formatDateOnly(skill.updatedAt)}
               </p>
             </div>
           </div>
@@ -165,6 +173,30 @@ export default function SkillDetailPage() {
               <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
                 已下架
               </span>
+            )}
+            {skill.unclaimed && (
+              <>
+                {/*
+                  无主意味着这个包是匿名上传(或早先导入)的,归属不可追溯。与"未认证"叠加时尤其值得醒目:
+                  平台对匿名内容没有任何背书,而包里的东西会被 Agent 执行 —— 用琥珀色而不是灰色,
+                  是因为这不是一条中性的状态说明,是一条需要使用者停一下的提示。
+                */}
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                  未认领
+                </span>
+                {canClaim ? (
+                  <Button
+                    variant="secondary"
+                    loading={claimSkill.isPending}
+                    onClick={() => claimSkill.mutate()}
+                  >
+                    认领为我的
+                  </Button>
+                ) : (
+                  <span className="text-xs text-gray-500 dark:text-gray-400">登录后可认领</span>
+                )}
+                {claimSkill.isError && <ErrorBanner error={claimSkill.error as ApiError} />}
+              </>
             )}
           </div>
         </div>
