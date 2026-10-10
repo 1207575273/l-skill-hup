@@ -31,9 +31,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.landray.skillhub.application.SkillTagAssignmentService;
 import com.landray.skillhub.application.auth.AuthenticatedUser;
+import com.landray.skillhub.domain.exception.AnonymousFreeTagNotAllowedException;
+import com.landray.skillhub.domain.exception.DeclaredOwnerNotAllowedException;
 import com.landray.skillhub.domain.exception.SkillVersionNameMismatchException;
 import com.landray.skillhub.domain.exception.SkillVersionNotIncreasingException;
+import com.landray.skillhub.domain.model.AppUser;
 import com.landray.skillhub.domain.model.Certification;
+import com.landray.skillhub.domain.model.DeclaredOwner;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillName;
 import com.landray.skillhub.domain.model.SkillOwner;
@@ -79,6 +83,7 @@ class SkillUploadApplicationServiceTest {
                 "描述",
                 SkillSource.INTERNAL,
                 new SkillOwner(ownerId, "张三", "80380486"),
+                null,
                 "摘要",
                 SkillStatus.PUBLISHED,
                 0L,
@@ -195,13 +200,13 @@ class SkillUploadApplicationServiceTest {
         when(skillRepository.findByName("foo")).thenReturn(Optional.empty());
         when(tagAssignmentService.resolveTagIds(List.of(1L), List.of(), 9L)).thenReturn(List.of(1L));
         when(skillRepository.insertSkill(
-                        eq(new SkillName("foo")), eq("展示名"), eq("一段描述"), eq(SkillSource.INTERNAL), eq(9L), any()))
+                        eq(new SkillName("foo")), eq("展示名"), eq("一段描述"), eq(SkillSource.INTERNAL), eq(9L), any(), any()))
                 .thenReturn(100L);
         when(skillRepository.insertVersion(any())).thenReturn(200L);
         when(skillRepository.findDetailById(100L)).thenReturn(Optional.of(sampleExistingSkill(9L)));
 
         NewSkillCommand command =
-                new NewSkillCommand(zip, "1.0.0", "展示名", "internal", List.of(1L), List.of(), 9L);
+                new NewSkillCommand(zip, "1.0.0", "展示名", "internal", List.of(1L), List.of(), 9L, null);
         Skill result = service().publishNewSkill(command);
 
         assertThat(result).isNotNull();
@@ -213,6 +218,66 @@ class SkillUploadApplicationServiceTest {
     }
 
     @Test
+    @DisplayName("匿名上传:归属落到内置 system,声明归属一并落库")
+    void should_storeDeclaredOwner_when_uploadedAnonymously() throws IOException {
+        byte[] zip = buildZip(Map.of("SKILL.md", skillMd("foo", "一段描述")));
+        when(skillRepository.findByName("foo")).thenReturn(Optional.empty());
+        when(tagAssignmentService.resolveTagIds(any(), any(), anyLong())).thenReturn(List.of(1L));
+        when(skillRepository.insertVersion(any())).thenReturn(200L);
+        when(skillRepository.findDetailById(anyLong())).thenReturn(Optional.of(sampleExistingSkill(9L)));
+        DeclaredOwner declared = new DeclaredOwner("张三", "80380486");
+
+        service().publishNewSkill(new NewSkillCommand(
+                zip, "1.0.0", "展示名", "internal", List.of(1L), List.of(), AppUser.SYSTEM_USER_ID, declared));
+
+        verify(skillRepository)
+                .insertSkill(any(), any(), any(), any(), eq(AppUser.SYSTEM_USER_ID), any(), eq(declared));
+    }
+
+    @Test
+    @DisplayName("已登录还带声明归属:拒绝,不静默丢弃")
+    void should_reject_when_authenticatedUploadCarriesDeclaredOwner() throws IOException {
+        byte[] zip = buildZip(Map.of("SKILL.md", skillMd("foo", "一段描述")));
+
+        NewSkillCommand command = new NewSkillCommand(
+                zip, "1.0.0", "展示名", "internal", List.of(1L), List.of(), 9L,
+                new DeclaredOwner("张三", null));
+
+        assertThatThrownBy(() -> service().publishNewSkill(command))
+                .isInstanceOf(DeclaredOwnerNotAllowedException.class);
+        // 校验在解包之前,不该为一个必然失败的请求白跑一遍 zip 解析与落盘。
+        verify(artifactStorage, never()).store(any(), any());
+    }
+
+    @Test
+    @DisplayName("匿名上传试图新建 FREE 标签:拒绝 —— 全局词表不交给未经身份认定的请求")
+    void should_reject_when_anonymousUploadCreatesFreeTags() throws IOException {
+        byte[] zip = buildZip(Map.of("SKILL.md", skillMd("foo", "一段描述")));
+
+        NewSkillCommand command = new NewSkillCommand(
+                zip, "1.0.0", "展示名", "internal", List.of(1L), List.of("我自己造的词"),
+                AppUser.SYSTEM_USER_ID, null);
+
+        assertThatThrownBy(() -> service().publishNewSkill(command))
+                .isInstanceOf(AnonymousFreeTagNotAllowedException.class);
+        verify(artifactStorage, never()).store(any(), any());
+    }
+
+    @Test
+    @DisplayName("匿名上传只选 CURATED 标签:放行 —— 选已有词条不新增任何东西")
+    void should_allowCuratedTags_when_uploadedAnonymously() throws IOException {
+        byte[] zip = buildZip(Map.of("SKILL.md", skillMd("foo", "一段描述")));
+        when(skillRepository.findByName("foo")).thenReturn(Optional.empty());
+        when(tagAssignmentService.resolveTagIds(any(), any(), anyLong())).thenReturn(List.of(1L));
+        when(skillRepository.insertVersion(any())).thenReturn(200L);
+        when(skillRepository.findDetailById(anyLong())).thenReturn(Optional.of(sampleExistingSkill(9L)));
+
+        Skill result = service().publishNewSkill(new NewSkillCommand(
+                zip, "1.0.0", "展示名", "internal", List.of(1L), List.of(), AppUser.SYSTEM_USER_ID, null));
+
+        assertThat(result).isNotNull();
+    }
+    @Test
     @DisplayName("displayName 留空时回退成最终 name")
     void should_fallbackDisplayNameToFinalName_when_displayNameBlank() throws IOException {
         byte[] zip = buildZip(Map.of("SKILL.md", skillMd("foo", "描述")));
@@ -221,10 +286,10 @@ class SkillUploadApplicationServiceTest {
         when(skillRepository.insertVersion(any())).thenReturn(200L);
         when(skillRepository.findDetailById(anyLong())).thenReturn(Optional.of(sampleExistingSkill(9L)));
 
-        NewSkillCommand command = new NewSkillCommand(zip, "1.0.0", "  ", "internal", List.of(1L), List.of(), 9L);
+        NewSkillCommand command = new NewSkillCommand(zip, "1.0.0", "  ", "internal", List.of(1L), List.of(), 9L, null);
         service().publishNewSkill(command);
 
-        verify(skillRepository).insertSkill(eq(new SkillName("foo")), eq("foo"), any(), any(), anyLong(), any());
+        verify(skillRepository).insertSkill(eq(new SkillName("foo")), eq("foo"), any(), any(), anyLong(), any(), any());
     }
 
     @Test
@@ -237,12 +302,12 @@ class SkillUploadApplicationServiceTest {
         when(skillRepository.insertVersion(any())).thenReturn(200L);
         when(skillRepository.findDetailById(anyLong())).thenReturn(Optional.of(sampleExistingSkill(9L)));
 
-        NewSkillCommand command = new NewSkillCommand(zip, "1.0.0", "展示名", "internal", List.of(1L), List.of(), 9L);
+        NewSkillCommand command = new NewSkillCommand(zip, "1.0.0", "展示名", "internal", List.of(1L), List.of(), 9L, null);
         service().publishNewSkill(command);
 
         verify(skillRepository)
                 .insertSkill(
-                        argThat(name -> name.value().startsWith("foo-")), any(), any(), any(), anyLong(), any());
+                        argThat(name -> name.value().startsWith("foo-")), any(), any(), any(), anyLong(), any(), any());
     }
 
     @Test
@@ -253,7 +318,7 @@ class SkillUploadApplicationServiceTest {
         when(skillRepository.findByName(anyString())).thenReturn(Optional.of(taken));
         when(tagAssignmentService.resolveTagIds(any(), any(), anyLong())).thenReturn(List.of(1L));
 
-        NewSkillCommand command = new NewSkillCommand(zip, "1.0.0", "展示名", "internal", List.of(1L), List.of(), 9L);
+        NewSkillCommand command = new NewSkillCommand(zip, "1.0.0", "展示名", "internal", List.of(1L), List.of(), 9L, null);
 
         assertThatThrownBy(() -> service().publishNewSkill(command))
                 .isInstanceOf(ResourceConflictException.class)

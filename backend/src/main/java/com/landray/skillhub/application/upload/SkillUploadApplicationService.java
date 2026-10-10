@@ -10,8 +10,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.landray.skillhub.application.SkillTagAssignmentService;
 import com.landray.skillhub.application.auth.AuthenticatedUser;
+import com.landray.skillhub.domain.exception.AnonymousFreeTagNotAllowedException;
+import com.landray.skillhub.domain.exception.DeclaredOwnerNotAllowedException;
 import com.landray.skillhub.domain.exception.SkillVersionNameMismatchException;
 import com.landray.skillhub.domain.exception.SkillVersionNotIncreasingException;
+import com.landray.skillhub.domain.model.AppUser;
 import com.landray.skillhub.domain.model.CardExcerptGenerator;
 import com.landray.skillhub.domain.model.Certification;
 import com.landray.skillhub.domain.model.ParsedSkillPackage;
@@ -142,6 +145,16 @@ public class SkillUploadApplicationService {
      */
     @Transactional
     public Skill publishNewSkill(NewSkillCommand command) {
+        boolean anonymous = command.actingUserId() == AppUser.SYSTEM_USER_ID;
+        if (!anonymous && command.declaredOwner() != null) {
+            throw new DeclaredOwnerNotAllowedException();
+        }
+        if (anonymous && !command.freeTagNames().isEmpty()) {
+            // FREE 标签是全局命名空间、需要 ADMIN 事后治理,不能由未经身份认定的请求往里灌词。
+            // CURATED 标签仍然可选:选已有词条不新增任何东西。
+            throw new AnonymousFreeTagNotAllowedException();
+        }
+
         ParsedSkillPackage parsed = validator.parseAndValidate(command.zipBytes());
         SemVer version = SemVer.parse(command.version());
         SkillSource source = SkillSource.fromParam(command.source());
@@ -160,7 +173,8 @@ public class SkillUploadApplicationService {
         artifactStorage.store(artifactKey, artifact.zipBytes());
 
         long skillId = skillRepository.insertSkill(
-                finalName, displayName, parsed.description(), source, command.actingUserId(), cardExcerpt);
+                finalName, displayName, parsed.description(), source, command.actingUserId(), cardExcerpt,
+                command.declaredOwner());
         long versionId = skillRepository.insertVersion(newVersionDraft(
                 skillId, version, artifactKey, parsed, artifact, command.actingUserId()));
 
@@ -168,13 +182,18 @@ public class SkillUploadApplicationService {
         skillRepository.updateLatestVersionIfGreater(
                 skillId, versionId, version.raw(), parsed.description(), cardExcerpt);
 
+        // 匿名上传单独标一个字段,而不是只靠 operator=1 让人去反推:审计日志的读者是出了事来查的人,
+        // "这个包是匿名传的、当时自称归属是谁"是他最先想知道的两件事。
         auditLog.info(
-                "skill 上传完成, event={}, skillId={}, skillName={}, skillVersion={}, operator={}",
+                "skill 上传完成, event={}, skillId={}, skillName={}, skillVersion={}, operator={},"
+                        + " anonymous={}, declaredOwnerName={}",
                 "skill_uploaded",
                 skillId,
                 finalName.value(),
                 version.raw(),
-                command.actingUserId());
+                command.actingUserId(),
+                anonymous,
+                command.declaredOwner() == null ? null : command.declaredOwner().name());
 
         return requireSkill(skillId);
     }

@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 
 import com.landray.skillhub.domain.model.Certification;
+import com.landray.skillhub.domain.model.DeclaredOwner;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillName;
 import com.landray.skillhub.domain.model.SkillSearchCriteria;
@@ -72,7 +73,18 @@ public interface SkillRepository {
      */
     long insertSkill(
             SkillName name, String displayName, String description, SkillSource source, long ownerUserId,
-            String cardExcerpt);
+            String cardExcerpt, DeclaredOwner declaredOwner);
+
+    /**
+     * 认领:把归属从内置 system(无主)改成 {@code newOwnerUserId}。
+     *
+     * <p><b>比较并交换,不是先查后改。</b>只有当前归属仍是 system 时才会生效,返回 {@code false} 即代表
+     * 这个 skill 已经被别人抢先认领了。"先到先得"要真的成立,仲裁必须在单条 SQL 里完成 —— 先 SELECT 判无主、
+     * 再 UPDATE 的写法在两人同时点认领时两条都会过判断,后写者静默覆盖前者,而两人都会看到"认领成功"。
+     *
+     * @return true=本次认领生效;false=已被他人认领(调用方应报冲突,而不是当成成功)
+     */
+    boolean claimOwnership(long skillId, long newOwnerUserId);
 
     /**
      * 插入新 skill_version 行。{@code certification} 恒为 {@code NONE}(业务建模文档 5.8:新版本不继承认证),

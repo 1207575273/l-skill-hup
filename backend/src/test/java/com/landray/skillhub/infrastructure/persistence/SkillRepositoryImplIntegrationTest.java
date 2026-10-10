@@ -31,7 +31,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import com.landray.skillhub.domain.model.AppUser;
 import com.landray.skillhub.domain.model.Certification;
+import com.landray.skillhub.domain.model.DeclaredOwner;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillName;
 import com.landray.skillhub.domain.model.SkillSearchCriteria;
@@ -556,20 +558,146 @@ class SkillRepositoryImplIntegrationTest {
         long owner = insertUser(dataSource.getConnection(), "张三", "80380486");
 
         long skillId = skillRepository.insertSkill(
-                new SkillName("insert-skill-test"), "展示名", "描述", SkillSource.INTERNAL, owner, "摘要");
+                new SkillName("insert-skill-test"), "展示名", "描述", SkillSource.INTERNAL, owner, "摘要", null);
 
         assertThat(skillId).isPositive();
         assertThat(skillRepository.findByName("insert-skill-test")).isPresent();
     }
 
     @Test
+    @DisplayName("声明归属原样落库并读回 —— 两个新列 + resultMap 映射的端到端校验")
+    void should_roundTripDeclaredOwner_whenInsertedWithIt() {
+        long skillId = skillRepository.insertSkill(
+                new SkillName("declared-owner-test"),
+                "展示名",
+                "描述",
+                SkillSource.INTERNAL,
+                AppUser.SYSTEM_USER_ID,
+                "摘要",
+                new DeclaredOwner("张三", "80380486"));
+
+        assertThat(skillRepository.findDetailById(skillId)).get().satisfies(skill -> {
+            // 归属人是内置 system -> 无主待认领
+            assertThat(skill.isUnclaimed()).isTrue();
+            assertThat(skill.declaredOwner()).isEqualTo(new DeclaredOwner("张三", "80380486"));
+        });
+    }
+
+    @Test
+    @DisplayName("没有声明归属时两列落 NULL,读回来整体是 null 而不是空实例")
+    void should_readBackNullDeclaredOwner_whenNotDeclared() {
+        long skillId = skillRepository.insertSkill(
+                new SkillName("no-declared-owner"),
+                "展示名",
+                "描述",
+                SkillSource.INTERNAL,
+                AppUser.SYSTEM_USER_ID,
+                "摘要",
+                null);
+
+        assertThat(skillRepository.findDetailById(skillId))
+                .get()
+                .satisfies(skill -> assertThat(skill.declaredOwner()).isNull());
+    }
+
+    @Test
+    @DisplayName("认领:归属是内置 system 时生效,owner 改成认领人")
+    void should_claimOwnership_whenOwnerIsSystem() throws SQLException {
+        long claimer = insertUser(dataSource.getConnection(), "李四", "80380487");
+        long skillId = skillRepository.insertSkill(
+                new SkillName("claim-ok"),
+                "展示名",
+                "描述",
+                SkillSource.INTERNAL,
+                AppUser.SYSTEM_USER_ID,
+                "摘要",
+                null);
+
+        assertThat(skillRepository.claimOwnership(skillId, claimer)).isTrue();
+        assertThat(skillRepository.findDetailById(skillId)).get().satisfies(skill -> {
+            assertThat(skill.isUnclaimed()).isFalse();
+            assertThat(skill.owner().userId()).isEqualTo(claimer);
+        });
+    }
+
+    @Test
+    @DisplayName("认领:已有真实归属人时不生效,返回 false 且归属不变")
+    void should_notClaimOwnership_whenAlreadyOwned() throws SQLException {
+        long owner = insertUser(dataSource.getConnection(), "张三", "80380486");
+        long other = insertUser(dataSource.getConnection(), "王五", "80380488");
+        long skillId = skillRepository.insertSkill(
+                new SkillName("claim-taken"), "展示名", "描述", SkillSource.INTERNAL, owner, "摘要", null);
+
+        assertThat(skillRepository.claimOwnership(skillId, other)).isFalse();
+        assertThat(skillRepository.findDetailById(skillId))
+                .get()
+                .satisfies(skill -> assertThat(skill.owner().userId()).isEqualTo(owner));
+    }
+
+    @Test
+    @DisplayName("并发认领:只有一个成功 —— 先到先得的仲裁必须在 SQL 的比较并交换里")
+    void should_allowOnlyOneWinner_whenConcurrentlyClaiming() throws InterruptedException, SQLException {
+        long skillId = skillRepository.insertSkill(
+                new SkillName("claim-race"),
+                "展示名",
+                "描述",
+                SkillSource.INTERNAL,
+                AppUser.SYSTEM_USER_ID,
+                "摘要",
+                null);
+        int threadCount = 6;
+        List<Long> claimers = new ArrayList<>();
+        // **一个连接开到底再关掉**,不要在循环里 dataSource.getConnection()。
+        // insertUser 只负责关 statement,连接归调用方;循环里每次新开就是每次泄漏一个,
+        // 6 个泄漏 + 下面 6 个并发认领会把默认 10 个连接的 Hikari 池直接抽干,表现为整条测试挂住不返回
+        // (踩过:全量 verify 从 4 分钟变成十几分钟还没完)。
+        try (Connection c = dataSource.getConnection()) {
+            for (int i = 0; i < threadCount; i++) {
+                claimers.add(insertUser(c, "认领人" + i, "9000000" + i));
+            }
+        }
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        try {
+            List<Future<Boolean>> futures = new ArrayList<>();
+            for (long claimer : claimers) {
+                futures.add(executor.submit(() -> {
+                    startLatch.await();
+                    return skillRepository.claimOwnership(skillId, claimer);
+                }));
+            }
+            startLatch.countDown();
+
+            long winners = futures.stream()
+                    .map(f -> {
+                        try {
+                            return f.get();
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    })
+                    .filter(Boolean::booleanValue)
+                    .count();
+
+            // 这一条是整个认领功能最该守住的地方:先 SELECT 判无主、再 UPDATE 的实现会让这里等于 6,
+            // 而六个人都会看到"认领成功",最后一个写入者静默覆盖了前五个人的归属。
+            assertThat(winners).isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(skillRepository.findDetailById(skillId))
+                .get()
+                .satisfies(skill -> assertThat(skill.isUnclaimed()).isFalse());
+    }
+    @Test
     @DisplayName("插入同名 skill 时抛 SKILL_NAME_DUPLICATED,不做先查后插")
     void should_throwConflict_whenInsertingDuplicateSkillName() throws SQLException {
         long owner = insertUser(dataSource.getConnection(), "张三", "80380486");
-        skillRepository.insertSkill(new SkillName("dup-name"), "展示名", "描述", SkillSource.INTERNAL, owner, "摘要");
+        skillRepository.insertSkill(new SkillName("dup-name"), "展示名", "描述", SkillSource.INTERNAL, owner, "摘要", null);
 
         assertThatThrownBy(() -> skillRepository.insertSkill(
-                        new SkillName("dup-name"), "另一个展示名", "另一个描述", SkillSource.COMMUNITY, owner, "摘要"))
+                        new SkillName("dup-name"), "另一个展示名", "另一个描述", SkillSource.COMMUNITY, owner, "摘要", null))
                 .isInstanceOf(ResourceConflictException.class)
                 .satisfies(ex -> assertThat(((ResourceConflictException) ex).code()).isEqualTo("SKILL_NAME_DUPLICATED"));
     }
@@ -588,7 +716,7 @@ class SkillRepositoryImplIntegrationTest {
                     startLatch.await();
                     try {
                         skillRepository.insertSkill(
-                                new SkillName("race-name"), "展示名", "描述", SkillSource.INTERNAL, owner, "摘要");
+                                new SkillName("race-name"), "展示名", "描述", SkillSource.INTERNAL, owner, "摘要", null);
                         return true;
                     } catch (ResourceConflictException e) {
                         return false;

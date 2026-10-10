@@ -26,6 +26,8 @@ public record SkillDetailResponse(
         Instant createdAt,
         Instant updatedAt,
         SkillOwnerResponse owner,
+        DeclaredOwnerResponse declaredOwner,
+        boolean unclaimed,
         List<SkillTagResponse> tags,
         SkillVersionDetailResponse latestVersion) {
 
@@ -50,6 +52,8 @@ public record SkillDetailResponse(
                 skill.createdAt(),
                 skill.updatedAt(),
                 SkillOwnerResponse.from(skill.owner()),
+                DeclaredOwnerResponse.from(skill.declaredOwner()),
+                skill.isUnclaimed(),
                 skill.tags().stream().map(SkillTagResponse::from).toList(),
                 SkillVersionDetailResponse.from(skill.latestVersion(), latestVersionFiles));
     }

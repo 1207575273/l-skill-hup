@@ -91,6 +91,16 @@ public interface SkillMapper {
 
     void insertSkillTags(@Param("skillId") long skillId, @Param("tagIds") List<Long> tagIds);
 
+    /**
+     * 认领:仅当当前归属仍是 {@code systemUserId}(无主)时才改。
+     *
+     * @return 受影响行数;0 表示已被别人抢先认领(见 XML 里对比较并交换的说明)
+     */
+    int claimOwnership(
+            @Param("skillId") long skillId,
+            @Param("newOwnerUserId") long newOwnerUserId,
+            @Param("systemUserId") long systemUserId);
+
     void updateMetadata(
             @Param("skillId") long skillId, @Param("displayName") String displayName, @Param("source") String source);
 

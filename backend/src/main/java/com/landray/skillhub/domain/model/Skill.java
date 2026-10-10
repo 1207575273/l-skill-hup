@@ -18,6 +18,7 @@ public record Skill(
         String description,
         SkillSource source,
         SkillOwner owner,
+        DeclaredOwner declaredOwner,
         String cardExcerpt,
         SkillStatus status,
         long downloadCount,
@@ -33,6 +34,20 @@ public record Skill(
     /** 是否出现在列表 / 搜索里——业务建模文档 4.8:下架(UNLISTED)后不出现在列表。 */
     public boolean isVisibleInListing() {
         return status == SkillStatus.PUBLISHED;
+    }
+
+    /**
+     * 是否还没有真实归属人(等待认领)。
+     *
+     * <p>判据是"归属人是内置 system 账号"。system 永远登不进来(见 {@link AppUser#SYSTEM_USER_ID}),
+     * 所以不存在"某个登录用户恰好就是 owner"的情况 —— 这带来一个顺带的好处:上传/改/删那条
+     * {@code isAdmin() || userId == owner.userId()} 的资源级权限判断,对无主 skill 自动退化成"仅 ADMIN",
+     * 不需要为无主状态单独写一条分支。
+     *
+     * <p>匿名上传的包和早先导入的包都落在这个状态里,两者都应当可被认领接手,所以刻意不区分。
+     */
+    public boolean isUnclaimed() {
+        return owner != null && owner.userId() != null && owner.userId() == AppUser.SYSTEM_USER_ID;
     }
 
     /** 最新版本是否已获平台认证。没有任何版本时视为未认证。 */

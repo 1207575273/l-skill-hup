@@ -27,6 +27,8 @@ public record SkillDetailRow(
         Long ownerUserId,
         String ownerDisplayName,
         String ownerEmployeeNo,
+        String declaredOwnerName,
+        String declaredOwnerEmployeeNo,
         String cardExcerpt,
         SkillStatus status,
         long downloadCount,

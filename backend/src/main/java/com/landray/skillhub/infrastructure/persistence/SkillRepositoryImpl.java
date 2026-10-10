@@ -9,7 +9,9 @@ import java.util.Optional;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
 
+import com.landray.skillhub.domain.model.AppUser;
 import com.landray.skillhub.domain.model.Certification;
+import com.landray.skillhub.domain.model.DeclaredOwner;
 import com.landray.skillhub.domain.model.LikePatternEscaper;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillName;
@@ -150,7 +152,7 @@ public class SkillRepositoryImpl implements SkillRepository {
     @Override
     public long insertSkill(
             SkillName name, String displayName, String description, SkillSource source, long ownerUserId,
-            String cardExcerpt) {
+            String cardExcerpt, DeclaredOwner declaredOwner) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("name", name.value());
         params.put("displayName", displayName);
@@ -158,6 +160,10 @@ public class SkillRepositoryImpl implements SkillRepository {
         params.put("source", source.name());
         params.put("ownerUserId", ownerUserId);
         params.put("cardExcerpt", cardExcerpt);
+        // 没有声明归属时两列都写 NULL ——"没有声明"与"声明了空字符串"不该是两种状态,归一化在
+        // DeclaredOwner.ofNullable 里已经做过,这里只负责把 null 如实落库。
+        params.put("declaredOwnerName", declaredOwner == null ? null : declaredOwner.name());
+        params.put("declaredOwnerEmployeeNo", declaredOwner == null ? null : declaredOwner.employeeNo());
         try {
             skillMapper.insertSkill(params);
         } catch (DuplicateKeyException e) {
@@ -208,6 +214,11 @@ public class SkillRepositoryImpl implements SkillRepository {
             skillMapper.insertSkillTags(skillId, tagIds);
         }
         return oldTagIds;
+    }
+
+    @Override
+    public boolean claimOwnership(long skillId, long newOwnerUserId) {
+        return skillMapper.claimOwnership(skillId, newOwnerUserId, AppUser.SYSTEM_USER_ID) == 1;
     }
 
     @Override
@@ -303,6 +314,7 @@ public class SkillRepositoryImpl implements SkillRepository {
                 null,
                 null,
                 new SkillOwner(row.ownerUserId(), row.ownerDisplayName(), row.ownerEmployeeNo()),
+                DeclaredOwner.ofNullable(row.declaredOwnerName(), row.declaredOwnerEmployeeNo()),
                 row.cardExcerpt(),
                 row.status(),
                 row.downloadCount(),
@@ -345,6 +357,7 @@ public class SkillRepositoryImpl implements SkillRepository {
                 row.description(),
                 row.source(),
                 new SkillOwner(row.ownerUserId(), row.ownerDisplayName(), row.ownerEmployeeNo()),
+                DeclaredOwner.ofNullable(row.declaredOwnerName(), row.declaredOwnerEmployeeNo()),
                 row.cardExcerpt(),
                 row.status(),
                 row.downloadCount(),

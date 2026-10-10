@@ -23,6 +23,18 @@ public record AppUser(
     /** 展示名列宽上限(VARCHAR(64)),超长在 interfaces 层的 Bean Validation 拦截,这里只做兜底防御。 */
     public static final int MAX_DISPLAY_NAME_LENGTH = 64;
 
+    /**
+     * 内置 system 账号的 id。
+     *
+     * <p>V0002 迁移里它是全库第一条插入,所以必然是 1;那次迁移的注释把这个前提写明了,这里的硬编码不是巧合。
+     * 它刻意不持有任何 {@link UserIdentity}、永远登不进来,存在的理由是让 {@code owner_user_id} /
+     * {@code created_by_user_id} 这类归属列保持 NOT NULL —— 系统内置、导入、以及匿名上传的数据都挂在它名下,
+     * 比把归属列做成可空再全链路特判要简单得多。
+     *
+     * <p>于是"归属人是 system"在业务上就等于**无主**:见 {@link Skill#isUnclaimed()}。
+     */
+    public static final long SYSTEM_USER_ID = 1L;
+
     public AppUser {
         if (displayName == null || displayName.isBlank()) {
             throw new IllegalArgumentException("displayName 不能为空");

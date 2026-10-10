@@ -73,6 +73,7 @@ class SkillCertificationApplicationServiceTest {
                 "描述",
                 SkillSource.INTERNAL,
                 new SkillOwner(7L, "张三", null),
+                null,
                 "摘要",
                 SkillStatus.PUBLISHED,
                 0L,

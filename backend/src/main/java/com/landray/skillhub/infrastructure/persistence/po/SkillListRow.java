@@ -39,6 +39,8 @@ public record SkillListRow(
         Long ownerUserId,
         String ownerDisplayName,
         String ownerEmployeeNo,
+        String declaredOwnerName,
+        String declaredOwnerEmployeeNo,
         Long latestVersionId,
         String latestVersionVersion,
         Certification latestVersionCertification) {}

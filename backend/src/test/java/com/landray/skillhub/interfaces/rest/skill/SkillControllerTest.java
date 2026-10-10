@@ -34,12 +34,16 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.landray.skillhub.application.SkillApplicationService;
 import com.landray.skillhub.application.SkillCertificationApplicationService;
+import com.landray.skillhub.application.SkillClaimApplicationService;
 import com.landray.skillhub.application.auth.AuthApplicationService;
 import com.landray.skillhub.application.auth.AuthenticatedUser;
+import com.landray.skillhub.application.upload.NewSkillCommand;
 import com.landray.skillhub.application.upload.PrecheckResult;
 import com.landray.skillhub.application.upload.SkillUploadApplicationService;
+import com.landray.skillhub.domain.model.AppUser;
 import com.landray.skillhub.domain.model.Certification;
 import com.landray.skillhub.domain.model.CertificationDecision;
+import com.landray.skillhub.domain.model.DeclaredOwner;
 import com.landray.skillhub.domain.model.NotPreviewableReason;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillName;
@@ -93,6 +97,9 @@ class SkillControllerTest {
     @MockitoBean
     private SkillCertificationApplicationService skillCertificationApplicationService;
 
+    @MockitoBean
+    private SkillClaimApplicationService skillClaimApplicationService;
+
     /**
      * 这四个只读接口是匿名可访问的(业务建模文档 5.16 权限矩阵)。但 {@code AuthenticationInterceptor}
      * 是 {@code HandlerInterceptor},属于 {@code @WebMvcTest} 切片<b>一定会纳入</b>的 web 层类型,它的依赖不给就
@@ -118,6 +125,7 @@ class SkillControllerTest {
                 "一句话描述",
                 SkillSource.INTERNAL,
                 new SkillOwner(2L, "张三", "80380486"),
+                null,
                 "卡片摘要",
                 status,
                 100L,
@@ -308,15 +316,36 @@ class SkillControllerTest {
     }
 
     // ------------------------------------------------------------------
-    // precheck / 发布 / 改元数据 / 上下架——写侧,都要求登录
+    // precheck / 发布 / 改元数据 / 上下架 / 认领——写侧。
+    //
+    // 注意:**precheck 与"发布新 skill"已改为匿名可用**(放低投稿门槛的产品取舍),所以这一段不再是
+    // "都要求登录"。匿名发布的包归属落到内置 system、处于待认领状态;其余写动作(改元数据、上下架、
+    // 发新版本)仍然要求登录 + owner/ADMIN,认领本身也要求登录。
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("precheck 未带 token 时返回 401")
-    void should_returnUnauthorized_when_precheckCalledWithoutToken() throws Exception {
+    @DisplayName("precheck 匿名可用:不带 token 也返回结果,传给 application 层的 actingUser 是 null")
+    void should_allowAnonymous_when_precheckCalledWithoutToken() throws Exception {
         MockMultipartFile file = new MockMultipartFile("file", "skill.zip", "application/zip", "dummy".getBytes());
+        when(skillUploadApplicationService.precheck(any(), isNull()))
+                .thenReturn(new PrecheckResult(
+                        true,
+                        new PrecheckResult.ParsedInfo("foo", "描述", List.of("Read")),
+                        "d".repeat(64),
+                        3,
+                        2048L,
+                        true,
+                        null,
+                        false,
+                        null,
+                        null,
+                        List.of()));
 
-        mockMvc.perform(multipart("/api/v1/skills/precheck").file(file)).andExpect(status().isUnauthorized());
+        mockMvc.perform(multipart("/api/v1/skills/precheck").file(file)).andExpect(status().isOk());
+
+        // 关键点是 actingUser 为 null 而不是报 401:端点标的是 @OptionalLogin,匿名放行。
+        // application 层据此把 canPublishNewVersion 置 false —— 匿名只能发全新 skill。
+        verify(skillUploadApplicationService).precheck(any(), isNull());
     }
 
     @Test
@@ -361,12 +390,61 @@ class SkillControllerTest {
     }
 
     @Test
-    @DisplayName("创建 skill 未带 token 时返回 401")
-    void should_returnUnauthorized_when_createSkillCalledWithoutToken() throws Exception {
+    @DisplayName("创建 skill 匿名可用:归属落到内置 system,声明归属去空白后带下去")
+    void should_fallbackOwnerToSystem_when_createSkillAnonymously() throws Exception {
         MockMultipartFile file = new MockMultipartFile("file", "skill.zip", "application/zip", "dummy".getBytes());
+        when(skillUploadApplicationService.publishNewSkill(any())).thenReturn(sampleSkill(SkillStatus.PUBLISHED));
 
-        mockMvc.perform(multipart("/api/v1/skills").file(file).param("version", "1.0.0").param("source", "internal"))
-                .andExpect(status().isUnauthorized());
+        mockMvc.perform(multipart("/api/v1/skills")
+                        .file(file)
+                        .param("version", "1.0.0")
+                        .param("source", "internal")
+                        .param("declaredOwnerName", "  张三  ")
+                        .param("declaredOwnerEmployeeNo", "80380486"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<NewSkillCommand> captor = ArgumentCaptor.forClass(NewSkillCommand.class);
+        verify(skillUploadApplicationService).publishNewSkill(captor.capture());
+        // 匿名 -> 归属人取内置 system(永远登不进来),这个 skill 于是处于"无主待认领"状态,
+        // 并且 owner/ADMIN 那条资源级权限判断对它自动退化成"仅 ADMIN"。
+        assertThat(captor.getValue().actingUserId()).isEqualTo(AppUser.SYSTEM_USER_ID);
+        // 首尾空白由 DeclaredOwner.ofNullable 归一化,Controller 不自己 trim。
+        assertThat(captor.getValue().declaredOwner()).isEqualTo(new DeclaredOwner("张三", "80380486"));
+    }
+
+    @Test
+    @DisplayName("创建 skill 匿名且不填归属:声明归属是 null,不是一个两格都空的实例")
+    void should_leaveDeclaredOwnerNull_when_anonymousAndNothingDeclared() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "skill.zip", "application/zip", "dummy".getBytes());
+        when(skillUploadApplicationService.publishNewSkill(any())).thenReturn(sampleSkill(SkillStatus.PUBLISHED));
+
+        mockMvc.perform(multipart("/api/v1/skills")
+                        .file(file)
+                        .param("version", "1.0.0")
+                        .param("source", "internal")
+                        .param("declaredOwnerName", "   "))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<NewSkillCommand> captor = ArgumentCaptor.forClass(NewSkillCommand.class);
+        verify(skillUploadApplicationService).publishNewSkill(captor.capture());
+        assertThat(captor.getValue().declaredOwner()).isNull();
+    }
+
+    @Test
+    @DisplayName("认领未带 token 时返回 401 —— 认领要落到一个真实账号上,匿名无从落脚")
+    void should_returnUnauthorized_when_claimCalledWithoutToken() throws Exception {
+        mockMvc.perform(post("/api/v1/skills/1/claim")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("认领:登录后转调 application 层,返回认领后的详情")
+    void should_claimSkill_when_tokenValid() throws Exception {
+        stubValidSession(9L, UserRole.USER);
+        when(skillClaimApplicationService.claim(eq(1L), any())).thenReturn(sampleSkill(SkillStatus.PUBLISHED));
+
+        mockMvc.perform(post("/api/v1/skills/1/claim").header("Authorization", "Bearer " + VALID_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("code-review"));
     }
 
     @Test

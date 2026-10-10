@@ -22,6 +22,8 @@ public record SkillSummaryResponse(
         int favoriteCount,
         Instant updatedAt,
         SkillOwnerResponse owner,
+        DeclaredOwnerResponse declaredOwner,
+        boolean unclaimed,
         List<SkillTagResponse> tags,
         /**
          * 最新版本的 id,没有任何版本时为 {@code null}。
@@ -48,6 +50,8 @@ public record SkillSummaryResponse(
                 skill.favoriteCount(),
                 skill.updatedAt(),
                 SkillOwnerResponse.from(skill.owner()),
+                DeclaredOwnerResponse.from(skill.declaredOwner()),
+                skill.isUnclaimed(),
                 skill.tags().stream().map(SkillTagResponse::from).toList(),
                 latestVersionId);
     }

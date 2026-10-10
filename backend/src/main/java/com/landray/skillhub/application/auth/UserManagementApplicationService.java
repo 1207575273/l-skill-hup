@@ -32,7 +32,8 @@ public class UserManagementApplicationService {
     private static final Logger log = LoggerFactory.getLogger(UserManagementApplicationService.class);
 
     /** V0002 种下的内置 system 账号,禁止被禁用(见 {@link UserDisableNotAllowedException} 类注释)。 */
-    private static final long SYSTEM_USER_ID = 1L;
+    /** 指向 {@link AppUser#SYSTEM_USER_ID};此前这里有一份私有副本,同一个事实落在两处迟早对不上。 */
+    private static final long SYSTEM_USER_ID = AppUser.SYSTEM_USER_ID;
 
     private static final String USER_NOT_FOUND_CODE = "USER_NOT_FOUND";
 

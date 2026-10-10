@@ -19,15 +19,19 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.landray.skillhub.application.SkillApplicationService;
 import com.landray.skillhub.application.SkillCertificationApplicationService;
+import com.landray.skillhub.application.SkillClaimApplicationService;
 import com.landray.skillhub.application.auth.AuthenticatedUser;
 import com.landray.skillhub.application.upload.NewSkillCommand;
 import com.landray.skillhub.application.upload.NewVersionCommand;
 import com.landray.skillhub.application.upload.PrecheckResult;
 import com.landray.skillhub.application.upload.SkillUploadApplicationService;
+import com.landray.skillhub.domain.model.AppUser;
 import com.landray.skillhub.domain.model.CertificationDecision;
+import com.landray.skillhub.domain.model.DeclaredOwner;
 import com.landray.skillhub.domain.model.Skill;
 import com.landray.skillhub.domain.model.SkillVersionFileContent;
 import com.landray.skillhub.interfaces.rest.auth.CurrentUserAccessor;
+import com.landray.skillhub.interfaces.rest.auth.OptionalLogin;
 import com.landray.skillhub.interfaces.rest.auth.RequireAdmin;
 import com.landray.skillhub.interfaces.rest.auth.RequireLogin;
 import com.landray.skillhub.shared.model.PageResult;
@@ -47,16 +51,19 @@ public class SkillController {
 
     private final SkillApplicationService skillApplicationService;
     private final SkillUploadApplicationService skillUploadApplicationService;
+    private final SkillClaimApplicationService skillClaimApplicationService;
     private final SkillCertificationApplicationService skillCertificationApplicationService;
     private final CurrentUserAccessor currentUserAccessor;
 
     public SkillController(
             SkillApplicationService skillApplicationService,
             SkillUploadApplicationService skillUploadApplicationService,
+            SkillClaimApplicationService skillClaimApplicationService,
             SkillCertificationApplicationService skillCertificationApplicationService,
             CurrentUserAccessor currentUserAccessor) {
         this.skillApplicationService = skillApplicationService;
         this.skillUploadApplicationService = skillUploadApplicationService;
+        this.skillClaimApplicationService = skillClaimApplicationService;
         this.skillCertificationApplicationService = skillCertificationApplicationService;
         this.currentUserAccessor = currentUserAccessor;
     }
@@ -122,18 +129,38 @@ public class SkillController {
     }
 
     /**
-     * precheck 要求登录:它的产出({@code canPublishNewVersion} / {@code suggestedName})依赖"当前是谁",而
-     * "上传新 skill"这条业务动作本身匿名不可用(业务建模文档 5.16),precheck 是这条动作不可分割的一部分。
+     * precheck 匿名可用,但登录后结果不同。
+     *
+     * <p>上传已放开为匿名可用,precheck 是那条动作不可分割的一部分,自然也得匿名可用。但它的产出
+     * {@code canPublishNewVersion} 依赖"当前是谁"(是不是目标 skill 的 owner 或 ADMIN),所以用
+     * {@link OptionalLogin} 而不是完全不标注 —— 不标注的端点拦截器根本不解析会话,那个字段对已登录的
+     * owner 也会恒为 false,等于废掉。匿名时它恒为 false:匿名只能发全新 skill,往已有 skill 追加版本
+     * 属于管理既有资源,仍然要 owner / ADMIN。
      */
-    @RequireLogin
+    @OptionalLogin
     @PostMapping("/precheck")
     public PrecheckResponse precheck(@RequestParam("file") MultipartFile file) {
-        AuthenticatedUser actingUser = currentUserAccessor.require();
+        AuthenticatedUser actingUser = currentUserAccessor.current().orElse(null);
         PrecheckResult result = skillUploadApplicationService.precheck(readBytes(file), actingUser);
         return PrecheckResponse.from(result);
     }
 
-    @RequireLogin
+    /**
+     * 上传新 skill。**匿名可用**。
+     *
+     * <p>匿名上传的包落在内置 system 名下,即"无主待认领"({@code Skill#isUnclaimed()});此时可以通过
+     * {@code declaredOwnerName} / {@code declaredOwnerEmployeeNo} 自己填一个归属,那是旁人判断"这大概是
+     * 谁的包"的唯一线索,**未经核实**。登录后由 {@code POST /skills/{id}/claim} 认领,归属才真正落到一个
+     * 账号上。
+     *
+     * <p>已登录时这两个参数会被拒(见 {@code DeclaredOwnerNotAllowedException}):归属人就是你本人,
+     * 再带一份自称归属只会制造歧义。
+     *
+     * <p><b>代价要写在这里</b>:匿名上传意味着内网任何人都能往平台推送会被 Agent 执行的内容,且归属不可
+     * 追溯。这是一个明确的产品取舍(放低投稿门槛),不是遗漏。平台侧仅剩的信任信号是认证(certify,
+     * ADMIN 专属),所以前端必须对"无主 + 未认证"的包给出显著警示。
+     */
+    @OptionalLogin
     @PostMapping
     public SkillDetailResponse createSkill(
             @RequestParam("file") MultipartFile file,
@@ -141,8 +168,15 @@ public class SkillController {
             @RequestParam(required = false) String displayName,
             @RequestParam String source,
             @RequestParam(required = false) List<Long> curatedTagIds,
-            @RequestParam(required = false) List<String> freeTagNames) {
-        AuthenticatedUser actingUser = currentUserAccessor.require();
+            @RequestParam(required = false) List<String> freeTagNames,
+            @RequestParam(required = false) String declaredOwnerName,
+            @RequestParam(required = false) String declaredOwnerEmployeeNo) {
+        // 匿名时归属人取内置 system(永远登不进来),于是这个 skill 天然处于待认领状态,
+        // 且 owner/ADMIN 那条资源级权限判断对它自动退化成"仅 ADMIN",不需要单独写分支。
+        long actingUserId = currentUserAccessor
+                .current()
+                .map(AuthenticatedUser::userId)
+                .orElse(AppUser.SYSTEM_USER_ID);
         NewSkillCommand command = new NewSkillCommand(
                 readBytes(file),
                 version,
@@ -150,8 +184,23 @@ public class SkillController {
                 source,
                 curatedTagIds == null ? List.of() : curatedTagIds,
                 freeTagNames == null ? List.of() : freeTagNames,
-                actingUser.userId());
+                actingUserId,
+                DeclaredOwner.ofNullable(declaredOwnerName, declaredOwnerEmployeeNo));
         Skill skill = skillUploadApplicationService.publishNewSkill(command);
+        return SkillDetailResponse.from(skill);
+    }
+
+    /**
+     * 认领一个无主 skill(匿名上传或早先导入的包),归属落到当前登录人。
+     *
+     * <p>先到先得,刻意不设资格门槛:声明归属里的工号是上传者自称的、未经核实,而本地建号普遍没绑工号,
+     * 拿它当门槛的实际效果是声明了工号的包谁都认领不了。换来的代价("可以认领别人匿名传的包")用审计留痕
+     * 加 ADMIN 可改派来兜。并发下的先后由仓储的比较并交换仲裁,不靠先查后改。
+     */
+    @RequireLogin
+    @PostMapping("/{id}/claim")
+    public SkillDetailResponse claimSkill(@PathVariable long id) {
+        Skill skill = skillClaimApplicationService.claim(id, currentUserAccessor.require());
         return SkillDetailResponse.from(skill);
     }
 
