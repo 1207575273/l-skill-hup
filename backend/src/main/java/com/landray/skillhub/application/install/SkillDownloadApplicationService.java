@@ -51,6 +51,15 @@ public class SkillDownloadApplicationService {
         return artifactStorage.openRead(artifactKey);
     }
 
+    /**
+     * 制品字节数。
+     *
+     * <p><b>当前没有调用方</b>:下载接口的 Content-Length 改从 {@code SkillArtifact.sizeBytes} 取,省掉一次
+     * 对存储的往返(换对象存储后那是一次跨境请求)。保留这个方法而不是删掉,是因为它背后的
+     * {@code ArtifactStorage.sizeOf} 是存储端口的一项能力,巡检"库里记的 size_bytes 与存储里实际对象是否一致"
+     * 需要它 —— 那正是上面那个改动唯一放弃的东西(改之后长度信的是库,不是存储)。真要彻底不做这种校对,
+     * 这里连同端口方法一起删,不要只留一个没人用的壳。
+     */
     public long sizeOf(String artifactKey) {
         return artifactStorage.sizeOf(artifactKey);
     }

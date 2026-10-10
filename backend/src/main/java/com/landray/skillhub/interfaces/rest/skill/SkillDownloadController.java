@@ -54,7 +54,13 @@ public class SkillDownloadController {
         response.setHeader(
                 HttpHeaders.CONTENT_DISPOSITION,
                 CONTENT_DISPOSITION_TEMPLATE.formatted(artifact.skillName(), artifact.version()));
-        response.setContentLengthLong(skillDownloadApplicationService.sizeOf(artifact.artifactKey()));
+        // 长度取自 artifact 自己,不再回存储问一次。SkillArtifact 是 join skill + skill_version 的窄投影,
+        // size_bytes 就在里面(上传管线落库时算的,与 sha256 出自同一份字节),上一行 resolveArtifact 刚查出来。
+        //
+        // 换成对象存储后这个区别是实打实的:问一次存储就是一次 HeadObject 跨境往返(实测到香港 RTT 350ms),
+        // 而下载本身只需要一次 GetObject。本地盘时代这一次调用几乎免费,所以当初那么写并不错;
+        // 存储换了,代价变了,写法跟着变。
+        response.setContentLengthLong(artifact.sizeBytes());
 
         boolean transferCompleted = streamArtifact(artifact, response);
         if (!transferCompleted) {

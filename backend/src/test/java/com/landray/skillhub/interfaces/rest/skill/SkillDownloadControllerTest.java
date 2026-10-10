@@ -63,7 +63,6 @@ class SkillDownloadControllerTest {
     @DisplayName("正常 GET 请求:写出完整字节、设置正确响应头、触发下载计数")
     void should_streamBytesSetHeadersAndRecordDownload_when_normalGetRequest() throws IOException {
         when(skillDownloadApplicationService.resolveArtifact(1L, "1.0.0")).thenReturn(artifact());
-        when(skillDownloadApplicationService.sizeOf("artifacts/1/1.0.0.zip")).thenReturn(3L);
         when(skillDownloadApplicationService.openArtifact("artifacts/1/1.0.0.zip"))
                 .thenReturn(new ByteArrayInputStream(new byte[] {1, 2, 3}));
 
@@ -74,6 +73,10 @@ class SkillDownloadControllerTest {
 
         assertThat(response.getContentAsByteArray()).containsExactly(1, 2, 3);
         assertThat(response.getContentType()).isEqualTo("application/zip");
+        // Content-Length 来自 SkillArtifact.sizeBytes(夹具里是 3),不是回存储问出来的 ——
+        // 这条断言连同上面"没有 sizeOf stub"一起,挡住有人把它改回去问一次存储:
+        // 对象存储下那是一次白给的跨境往返。
+        assertThat(response.getContentLength()).isEqualTo(3);
         assertThat(response.getHeader("Content-Disposition")).contains("code-review-1.0.0.zip");
         verify(skillDownloadApplicationService).recordDownload(1L, 10L, "127.0.0.1");
     }
@@ -82,7 +85,6 @@ class SkillDownloadControllerTest {
     @DisplayName("HEAD 请求不计入下载计数,即便响应体逻辑照常执行")
     void should_notRecordDownload_when_headRequest() throws IOException {
         when(skillDownloadApplicationService.resolveArtifact(1L, "1.0.0")).thenReturn(artifact());
-        when(skillDownloadApplicationService.sizeOf(any())).thenReturn(3L);
         when(skillDownloadApplicationService.openArtifact(any()))
                 .thenReturn(new ByteArrayInputStream(new byte[] {1, 2, 3}));
 
@@ -99,7 +101,6 @@ class SkillDownloadControllerTest {
     @DisplayName("带 Range 头的请求不计入下载计数")
     void should_notRecordDownload_when_rangeHeaderPresent() throws IOException {
         when(skillDownloadApplicationService.resolveArtifact(1L, "1.0.0")).thenReturn(artifact());
-        when(skillDownloadApplicationService.sizeOf(any())).thenReturn(3L);
         when(skillDownloadApplicationService.openArtifact(any()))
                 .thenReturn(new ByteArrayInputStream(new byte[] {1, 2, 3}));
 
@@ -117,7 +118,6 @@ class SkillDownloadControllerTest {
     @DisplayName("传输中途中断(客户端断开连接):不抛异常、不计入下载计数")
     void should_notThrowAndNotRecordDownload_when_transferInterrupted() throws IOException {
         when(skillDownloadApplicationService.resolveArtifact(1L, "1.0.0")).thenReturn(artifact());
-        when(skillDownloadApplicationService.sizeOf(any())).thenReturn(3L);
         when(skillDownloadApplicationService.openArtifact(any())).thenReturn(new ThrowingInputStream());
 
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/skills/1/versions/1.0.0/download");
@@ -132,7 +132,6 @@ class SkillDownloadControllerTest {
     @DisplayName("X-Forwarded-For 存在时用它的第一段作为计数用的 clientIp")
     void should_useForwardedForHeader_when_present() throws IOException {
         when(skillDownloadApplicationService.resolveArtifact(1L, "1.0.0")).thenReturn(artifact());
-        when(skillDownloadApplicationService.sizeOf(any())).thenReturn(3L);
         when(skillDownloadApplicationService.openArtifact(any()))
                 .thenReturn(new ByteArrayInputStream(new byte[] {1, 2, 3}));
 
