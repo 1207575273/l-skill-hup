@@ -431,6 +431,13 @@ class SkillControllerTest {
     }
 
     @Test
+    @DisplayName("上传端点收到非 multipart 请求时返回 400,不是 500 —— 匿名可达的表面不该被随手探出 ERROR")
+    void should_returnBadRequest_when_createSkillCalledWithoutMultipartBody() throws Exception {
+        // 这条路径在上传要求登录的年代够不到(先被 401 挡住)。放开匿名后它成了内网任何人都能打的接口,
+        // 而客户端错误报成 500 会在服务端刷 ERROR —— 谁都能触发的噪音会让真故障更难被发现。
+        mockMvc.perform(post("/api/v1/skills")).andExpect(status().isBadRequest());
+    }
+    @Test
     @DisplayName("认领未带 token 时返回 401 —— 认领要落到一个真实账号上,匿名无从落脚")
     void should_returnUnauthorized_when_claimCalledWithoutToken() throws Exception {
         mockMvc.perform(post("/api/v1/skills/1/claim")).andExpect(status().isUnauthorized());

@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 
 import com.landray.skillhub.shared.exception.BusinessException;
 import com.landray.skillhub.shared.logging.TraceIdConstants;
@@ -78,6 +79,27 @@ public class GlobalExceptionHandler {
         log.warn("上传文件超过大小上限, path={}, traceId={}", request.getRequestURI(), traceId);
         ErrorResponse body = ErrorResponse.of(UPLOAD_TOO_LARGE_CODE, UPLOAD_TOO_LARGE_MESSAGE, traceId);
         return ResponseEntity.status(HTTP_STATUS_PAYLOAD_TOO_LARGE).body(body);
+    }
+
+    /**
+     * 请求压根不是 multipart(没带 multipart 体,或 Content-Type 不是 multipart/form-data),却打到了带
+     * {@code @RequestParam MultipartFile} 的上传端点。
+     *
+     * <p>与上面那条 {@link MaxUploadSizeExceededException} 同根同源:都在 {@code DispatcherServlet} 解析请求体
+     * 阶段抛出、早于 Controller 执行、不属于 {@link BusinessException} 体系,不单独接就会落进兜底的
+     * {@link Exception} 处理器变成 500。
+     *
+     * <p><b>为什么现在才需要它</b>:上传端点此前要求登录,这条路径对没有 token 的请求根本到不了 ——
+     * 先被 401 挡住了。上传放开匿名之后它成了内网任何人都能打到的表面,于是随手探一下这个接口就会
+     * 收到一个 500、并在服务端刷一条 ERROR。客户端错误报成服务端故障本身就是错的,而更实际的代价是
+     * 污染巡检要看的那条 ERROR 日志 —— 谁都能触发的噪音会让真故障更难被发现。
+     *
+     * <p>{@link MaxUploadSizeExceededException} 是本类型的子类,Spring 按最具体匹配派发,那条分支不受影响。
+     */
+    @ExceptionHandler(MultipartException.class)
+    public ResponseEntity<ErrorResponse> handleNotMultipart(
+            MultipartException ex, HttpServletRequest request) {
+        return handleClientError(HTTP_STATUS_BAD_REQUEST, ex, request);
     }
 
     /** {@code @Valid} 校验 {@code @RequestBody} 失败,字段级错误进 details。 */
