@@ -1,5 +1,10 @@
 # Java / Maven
 target/
+# Eclipse/JDT 的默认输出目录。**target/ 盖不住它,别看着像重复就删掉。**
+# VSCode 的 Red Hat Java 扩展(jdt.ls)若把 backend/ 当非托管文件夹导入,源根会变成项目根、输出变成 bin,
+# 于是整个 backend/ 被按原相对路径复制进 bin/ —— 连 target/、logs/、data/ 一起抄,.java 就地编成 .class。
+# 实际踩到过一次:攒出 133MB / 1163 个文件,含 surefire 的 .dumpstream 与整套测试报告 html。
+bin/
 *.class
 *.jar
 *.war
